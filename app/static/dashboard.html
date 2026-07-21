@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Fleet Triage Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+--bg-main:#0b0f14;
+--bg-card:#11161d;
+--bg-card-hover:#151b23;
+--bg-panel:#0d1117;
+--text-primary:#d6dde6;
+--text-secondary:#7d8590;
+--text-muted:#5f6874;
+--border:#2a3038;
+--border-strong:#3a424d;
+--accent:#f59e0b;
+--success:#f59e0b;
+--pending:#c76a37;
+--accent-soft:rgba(245,158,11,.1);
+--accent-border:rgba(245,158,11,.32);
+--pending-soft:rgba(199,106,55,.11);
+--mono:'JetBrains Mono',monospace;
+--sans:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+*{
+box-sizing:border-box;
+}
+body{
+background:var(--bg-main);
+color:var(--text-primary);
+font-family:var(--sans);
+margin:0;
+padding:1.5rem;
+line-height:1.45;
+}
+.container{
+max-width:1000px;
+margin:0 auto;
+}
+header{
+display:flex;
+justify-content:space-between;
+align-items:center;
+margin-bottom:1.25rem;
+padding-bottom:.75rem;
+border-bottom:1px solid var(--border);
+}
+h1{
+font-size:1.45rem;
+font-weight:600;
+margin:0;
+color:#f4f7fb;
+letter-spacing:-.04em;
+}
+.status-badge{
+display:flex;
+align-items:center;
+gap:.45rem;
+font-family:var(--mono);
+font-size:.72rem;
+font-weight:500;
+letter-spacing:.02em;
+text-transform:uppercase;
+color:var(--accent);
+background:var(--accent-soft);
+padding:.3rem .5rem;
+border-radius:4px;
+border:1px solid var(--accent-border);
+}
+.dot{
+width:7px;
+height:7px;
+border-radius:50%;
+background:var(--accent);
+box-shadow:0 0 10px rgba(245,158,11,.7);
+animation:pulse 1.8s infinite;
+}
+@keyframes pulse{
+0%{opacity:1;transform:scale(1)}
+50%{opacity:.48;transform:scale(1.18)}
+100%{opacity:1;transform:scale(1)}
+}
+#incidents-container{
+display:flex;
+flex-direction:column;
+gap:.55rem;
+}
+.incident-card{
+background:var(--bg-card);
+border:1px solid var(--border);
+border-left:4px solid transparent;
+border-radius:4px;
+overflow:hidden;
+transition:background-color .16s ease,border-color .16s ease;
+box-shadow:none;
+}
+.incident-card.status-resolved{
+border-left-color:var(--success);
+}
+.incident-card.status-pending{
+border-left-color:var(--pending);
+}
+.incident-card:hover{
+background:var(--bg-card-hover);
+border-color:var(--border-strong);
+}
+.incident-card.status-resolved:hover{
+border-left-color:var(--success);
+}
+.incident-card.status-pending:hover{
+border-left-color:var(--pending);
+}
+.incident-header{
+padding:.75rem .875rem;
+cursor:pointer;
+display:grid;
+grid-template-columns:minmax(0,1fr) auto;
+gap:.75rem;
+align-items:center;
+}
+.incident-title{
+min-width:0;
+display:flex;
+flex-direction:column;
+gap:.24rem;
+}
+.pod-name{
+font-family:var(--mono);
+font-size:.95rem;
+font-weight:700;
+line-height:1.2;
+color:#f3f4f6;
+letter-spacing:-.02em;
+white-space:nowrap;
+overflow:hidden;
+text-overflow:ellipsis;
+}
+.incident-meta{
+display:flex;
+align-items:center;
+gap:.5rem;
+min-width:0;
+}
+.detected-time{
+font-family:var(--mono);
+font-size:.72rem;
+font-weight:400;
+color:var(--text-secondary);
+white-space:nowrap;
+}
+.status-label{
+font-family:var(--mono);
+font-size:.68rem;
+font-weight:500;
+line-height:1;
+color:var(--text-muted);
+text-transform:uppercase;
+letter-spacing:.04em;
+}
+.diagnosis-preview{
+font-family:var(--mono);
+font-size:.78rem;
+font-weight:400;
+line-height:1.35;
+color:var(--text-secondary);
+white-space:nowrap;
+overflow:hidden;
+text-overflow:ellipsis;
+}
+.expand-icon{
+font-family:var(--mono);
+font-size:.8rem;
+color:var(--text-secondary);
+transition:transform .16s ease,color .16s ease;
+line-height:1;
+}
+.incident-card:hover .expand-icon{
+color:var(--accent);
+}
+.incident-card.expanded .expand-icon{
+transform:rotate(180deg);
+}
+.incident-body{
+display:none;
+padding:.875rem;
+border-top:1px solid var(--border);
+background:var(--bg-panel);
+}
+.incident-card.expanded .incident-body{
+display:block;
+animation:fadeIn .16s ease;
+}
+@keyframes fadeIn{
+from{opacity:0;transform:translateY(-4px)}
+to{opacity:1;transform:translateY(0)}
+}
+h3{
+font-size:.78rem;
+font-weight:600;
+letter-spacing:.04em;
+text-transform:uppercase;
+margin:0 0 .45rem;
+color:#f4f7fb;
+}
+pre{
+background:var(--bg-card);
+border:1px solid var(--border);
+border-radius:4px;
+padding:.75rem;
+overflow-x:auto;
+font-family:var(--mono);
+font-size:.82rem;
+line-height:1.5;
+color:var(--text-primary);
+white-space:pre-wrap;
+margin:0 0 .875rem;
+}
+.trace-box{
+background:var(--bg-card);
+border:1px solid var(--border);
+border-radius:4px;
+padding:.65rem .75rem;
+}
+.trace-item{
+font-family:var(--mono);
+font-size:.78rem;
+line-height:1.45;
+padding:.42rem 0;
+border-bottom:1px dashed var(--border);
+}
+.trace-item:first-child{
+padding-top:0;
+}
+.trace-item:last-child{
+padding-bottom:0;
+border-bottom:none;
+}
+.tool-name{
+color:var(--accent);
+font-weight:700;
+}
+.tool-args{
+color:var(--text-secondary);
+}
+.empty-state{
+text-align:center;
+padding:2.5rem;
+font-family:var(--mono);
+font-size:.82rem;
+color:var(--text-secondary);
+}
+.remediation-badge {
+font-family:var(--mono);
+font-size:0.7rem;
+font-weight:600;
+padding:0.2rem 0.4rem;
+border-radius:4px;
+border:1px solid;
+white-space:nowrap;
+display:inline-block;
+margin-left:0.5rem;
+vertical-align:middle;
+}
+.badge-executed {
+color:#10b981;
+background:rgba(16,185,129,0.1);
+border-color:rgba(16,185,129,0.3);
+}
+.badge-pending {
+color:var(--accent);
+background:var(--accent-soft);
+border-color:var(--accent-border);
+}
+.badge-skipped {
+color:#ef4444;
+background:rgba(239,68,68,0.1);
+border-color:rgba(239,68,68,0.3);
+}
+.badge-error {
+color:var(--text-secondary);
+background:rgba(125,133,144,0.1);
+border-color:rgba(125,133,144,0.3);
+}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+<div style="display: flex; align-items: center; gap: 1rem;">
+    <h1>Fleet Triage Dashboard</h1>
+    <div class="status-badge">
+    <div class="dot"></div>
+    Live Polling
+    </div>
+</div>
+<div style="display: flex; align-items: center; gap: 0.5rem;">
+    <input type="password" id="groq-key-input" placeholder="Groq API Key (Optional)" 
+           style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); padding: 0.4rem 0.6rem; border-radius: 4px; font-family: var(--mono); font-size: 0.75rem; width: 200px;">
+    <button onclick="setApiKey()" style="background: var(--accent); color: #000; border: none; padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer;">Set</button>
+</div>
+</header>
+<div id="incidents-container">
+<div class="empty-state">Loading incidents...</div>
+</div>
+</div>
+<script>
+let expandedIncidents=new Set();
+let customApiKey = '';
+
+function setApiKey() {
+    const input = document.getElementById('groq-key-input');
+    customApiKey = input.value.trim();
+    if (customApiKey) {
+        input.placeholder = 'Key set in memory';
+        input.value = '';
+        alert('API Key set for this session!');
+    }
+}
+
+function toggleIncident(id){
+const card=document.getElementById(`incident-${id}`);
+if(card.classList.contains('expanded')){
+card.classList.remove('expanded');
+expandedIncidents.delete(id);
+}else{
+card.classList.add('expanded');
+expandedIncidents.add(id);
+}
+}
+
+function formatRelativeTime(isoString){
+const date=new Date(isoString);
+const now=new Date();
+const diffMs=now-date;
+const future=diffMs<0;
+const absMs=Math.abs(diffMs);
+const seconds=Math.floor(absMs/1000);
+const minutes=Math.floor(seconds/60);
+const hours=Math.floor(minutes/60);
+const days=Math.floor(hours/24);
+const months=Math.floor(days/30);
+const years=Math.floor(days/365);
+let value;
+if(seconds<10)value='now';
+else if(seconds<60)value=`${seconds}s`;
+else if(minutes<60)value=`${minutes}m`;
+else if(hours<24)value=`${hours}h`;
+else if(days<30)value=`${days}d`;
+else if(months<12)value=`${months}mo`;
+else value=`${years}y`;
+if(value==='now')return value;
+return future?`in ${value}`:`${value} ago`;
+}
+
+function formatTime(isoString){
+return formatRelativeTime(isoString);
+}
+
+function escapeHtml(value){
+return String(value??'')
+.replace(/&/g,'&amp;')
+.replace(/</g,'&lt;')
+.replace(/>/g,'&gt;')
+.replace(/"/g,'&quot;')
+.replace(/'/g,'&#039;');
+}
+
+function formatPreview(diagnosis){
+const fallback='Agent triage in progress...';
+const text=String(diagnosis||fallback).replace(/\s+/g,' ').trim();
+return text.length>120?`${text.slice(0,117)}...`:text;
+}
+
+function formatTrace(traceJson){
+try{
+const trace=JSON.parse(traceJson);
+if(!trace||trace.length===0)return'<div class="trace-item">No tools called.</div>';
+return trace.map(t=>{
+return `<div class="trace-item">
+<span class="tool-name">› ${escapeHtml(t.tool)}</span>
+<span class="tool-args">${escapeHtml(JSON.stringify(t.input))}</span>
+</div>`;
+}).join('');
+}catch(e){
+return'<div class="trace-item">Trace data unavailable.</div>';
+}
+}
+
+async function fetchIncidents(){
+try{
+const headers = {};
+if (customApiKey) {
+    headers['X-Groq-Key'] = customApiKey;
+}
+const response=await fetch('/incidents', { headers });
+const incidents=await response.json();
+const container=document.getElementById('incidents-container');
+if(incidents.length===0){
+container.innerHTML='<div class="empty-state">No incidents found. Cluster is healthy.</div>';
+return;
+}
+incidents.sort((a,b)=>new Date(b.detected_at)-new Date(a.detected_at));
+let html='';
+incidents.forEach(inc=>{
+    const hasDiagnosis=!!inc.diagnosis;
+    const statusClass=hasDiagnosis?'status-resolved':'status-pending';
+    const statusLabel=hasDiagnosis?'diagnosed':'triaging';
+    const isExpanded=expandedIncidents.has(inc.id)?'expanded':'';
+    const preview=escapeHtml(formatPreview(inc.diagnosis));
+    
+    let badgeHtml = '';
+    if (inc.action_status) {
+        let badgeClass = 'badge-error';
+        let badgeText = inc.action_status;
+        
+        if (inc.action_status === 'executed') {
+            badgeClass = 'badge-executed';
+            const timeStr = inc.executed_at ? new Date(inc.executed_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+            badgeText = `Executed (Restarted at ${timeStr})`;
+        } else if (inc.action_status === 'pending_approval') {
+            badgeClass = 'badge-pending';
+            badgeText = 'Pending Approval';
+        } else if (inc.action_status === 'skipped_by_safety') {
+            badgeClass = 'badge-skipped';
+            badgeText = 'Skipped by Safety Limit';
+        } else if (inc.action_status === 'parse_error') {
+            badgeClass = 'badge-error';
+            badgeText = 'Parse Error';
+        }
+        badgeHtml = `<span class="remediation-badge ${badgeClass}">${badgeText}</span>`;
+    }
+
+    let bodyContent='';
+    if(hasDiagnosis){
+bodyContent=`
+<h3>Final Diagnosis</h3>
+<pre>${escapeHtml(inc.diagnosis)}</pre>
+<h3>Tool Execution Trace</h3>
+<div class="trace-box">
+${formatTrace(inc.tool_trace)}
+</div>
+`;
+}else{
+bodyContent=`
+<div class="empty-state" style="padding:1.25rem;">
+<span>Agent is currently triaging this pod...</span>
+</div>
+`;
+}
+html+=`
+<div class="incident-card ${statusClass} ${isExpanded}" id="incident-${inc.id}">
+<div class="incident-header" onclick="toggleIncident(${inc.id})">
+<div class="incident-title">
+<span class="pod-name">${escapeHtml(inc.pod_name)}</span>
+<div class="incident-meta">
+<span class="detected-time">${formatTime(inc.detected_at)}</span>
+<span class="status-label">${statusLabel}</span>
+${badgeHtml}
+</div>
+<span class="diagnosis-preview">${preview}</span>
+</div>
+<div class="expand-icon" aria-hidden="true">&#9662;</div>
+</div>
+<div class="incident-body">
+${bodyContent}
+</div>
+</div>
+`;
+});
+container.innerHTML=html;
+}catch(error){
+console.error('Failed to fetch incidents:',error);
+}
+}
+
+fetchIncidents();
+setInterval(fetchIncidents,10000);
+</script>
+</body>
+</html>
