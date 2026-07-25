@@ -1,7 +1,7 @@
 # Fleet Triage Agent
 
 An AI agent that watches a Kubernetes cluster, detects unhealthy pods,
-investigates root cause using tool-calling (Anthropic SDK, no framework),
+investigates root cause using tool-calling (Groq SDK, no framework),
 and produces a plain-English diagnosis + fix recommendation.
 
 ## Setup
