@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: crash-sts
+spec:
+  selector:
+    matchLabels:
+      app: crash
+  serviceName: 'crash'
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: crash
+    spec:
+      containers:
+      - name: busybox
+        image: busybox
+        command: ['sh', '-c', 'exit 1']
+
