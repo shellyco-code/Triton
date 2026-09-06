@@ -59,8 +59,7 @@ async def poll_cluster():
                         logger.info(f"New unhealthy pod detected: '{pod_name}'. Triggering triage agent...")
                         
                         try:
-                            # Run the triage agent loop. It uses synchronous OpenAI/Groq calls,
-                            # so we must run it in a threadpool.
+                            # Run the triage agent loop using threadpool for non-blocking execution
                             result = await run_in_threadpool(triage_pod, pod)
                             
                             # Store incident and diagnosis
