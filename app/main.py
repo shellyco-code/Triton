@@ -1,12 +1,7 @@
 """
-FastAPI entry point. Exposes:
-  GET  /health           - simple liveness check
-  GET  /scan              - runs one detection pass, returns unhealthy pods
-  POST /triage/{pod_name} - runs the full agent loop on a specific pod
-  GET  /incidents         - lists stored incidents + diagnoses
-
-For v1, polling is triggered by hitting /scan (manually or via a cron/loop).
-A background polling loop can be added once this base is working.
+FastAPI Service Entry Point for Fleet Triage Agent.
+Exposes endpoints for health check, cluster telemetry scans, pod triage execution,
+remediation control, and live dashboard UI rendering.
 """
 
 import json
@@ -140,6 +135,7 @@ def list_incidents():
             "proposed_action_type": diag.proposed_action_type if diag else None,
             "action_status": diag.action_status if diag else None,
             "executed_at": diag.executed_at.isoformat() if diag and diag.executed_at else None,
+            "diagnosis_id": diag.id if diag else None,
         })
     db.close()
     return out

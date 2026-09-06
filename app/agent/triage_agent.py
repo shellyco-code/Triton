@@ -1,13 +1,14 @@
 """
-The core agent loop. This is the most important file in the project -
-it's the part that proves you understand tool-calling from first principles
-rather than relying on a framework to hide it from you.
+Automated Kubernetes SRE Triage Agent.
+Executes iterative tool-calling using the Groq API to investigate unhealthy pods,
+collect telemetry (logs, events, pod specs), and output structured diagnoses and
+remediation proposals.
 
-Flow:
-  1. Give Groq a system prompt + the unhealthy pod info + a set of tools
-  2. Groq decides which tool(s) to call to investigate
-  3. We execute the tool, feed the result back
-  4. Repeat until Groq stops calling tools and gives a final diagnosis
+Triage Loop Workflow:
+  1. Pass system prompt, unhealthy pod summary, and function schemas to Groq LLM.
+  2. Evaluate tool invocation requests (get_pod_logs, describe_pod, get_pod_events).
+  3. Execute K8s client methods and feed telemetry outputs back into the conversation context.
+  4. Iterate until LLM emits a final JSON diagnostic analysis and remediation proposal.
 """
 
 import json

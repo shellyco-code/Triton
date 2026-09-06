@@ -1,7 +1,7 @@
 """
-Thin wrapper around the Kubernetes Python client.
-Everything the agent needs to "see" a cluster lives here.
-Keep this dumb on purpose - no AI logic, just data fetching.
+Kubernetes API client wrapper.
+Provides utility methods for cluster inspection, pod status checks,
+log extraction, K8s event queries, and pod lifecycle management (restarts).
 """
 
 from kubernetes import client, config
@@ -15,8 +15,11 @@ def load_k8s():
     """
     try:
         config.load_kube_config()  # local dev, reads ~/.kube/config
-    except config.ConfigException:
-        config.load_incluster_config()  # if this were running inside a pod
+    except Exception:
+        try:
+            config.load_incluster_config()  # if this were running inside a pod
+        except Exception as e:
+            print(f"Warning: Could not load k8s config: {e}")
 
 
 def list_unhealthy_pods(namespace: str | None = None):
@@ -26,11 +29,15 @@ def list_unhealthy_pods(namespace: str | None = None):
     If namespace is None, queries all namespaces.
     This is what the agent's watch loop polls on an interval.
     """
-    v1 = client.CoreV1Api()
-    if namespace:
-        pods = v1.list_namespaced_pod(namespace)
-    else:
-        pods = v1.list_pod_for_all_namespaces()
+    try:
+        v1 = client.CoreV1Api()
+        if namespace:
+            pods = v1.list_namespaced_pod(namespace)
+        else:
+            pods = v1.list_pod_for_all_namespaces()
+    except Exception as e:
+        print(f"Warning: K8s cluster not accessible: {e}")
+        return []
 
     unhealthy = []
     for pod in pods.items:
