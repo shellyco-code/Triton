@@ -1,8 +1,12 @@
 import SwiftUI
 
 struct IncidentListView: View {
-    @State private var viewModel = IncidentListViewModel()
-    
+    @State private var viewModel: IncidentListViewModel
+
+    init(viewModel: IncidentListViewModel = IncidentListViewModel()) {
+        _viewModel = State(initialValue: viewModel)
+    }
+
     var body: some View {
         NavigationStack {
             List(viewModel.incidents) { incident in
@@ -46,29 +50,36 @@ struct IncidentListView: View {
 
 struct IncidentRowView: View {
     let incident: Incident
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(incident.podName)
                 .font(.headline)
-            
+
             HStack {
                 Text(relativeTime(from: incident.detectedAt))
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 Spacer()
-                
+
                 StatusPillView(status: incident.actionStatus)
             }
         }
         .padding(.vertical, 4)
     }
-    
+
     private func relativeTime(from isoString: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = formatter.date(from: isoString) ?? ISO8601DateFormatter().date(from: isoString) else {
+        // Backend timestamps (Python datetime.isoformat()) look like
+        // "2026-08-25T14:46:10.432390" — no timezone suffix, microsecond precision.
+        // ISO8601DateFormatter requires a timezone designator and fails to parse this silently,
+        // so trim to whole-seconds precision and parse with an explicit UTC formatter instead.
+        let trimmed = String(isoString.prefix(19)) // "yyyy-MM-dd'T'HH:mm:ss"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        guard let date = formatter.date(from: trimmed) else {
             return isoString
         }
         let relativeFormatter = RelativeDateTimeFormatter()
@@ -79,7 +90,7 @@ struct IncidentRowView: View {
 
 struct StatusPillView: View {
     let status: String?
-    
+
     var body: some View {
         Text(displayString)
             .font(.caption2)
@@ -90,7 +101,7 @@ struct StatusPillView: View {
             .foregroundColor(backgroundColor)
             .cornerRadius(8)
     }
-    
+
     private var displayString: String {
         guard let status = status else { return "TRIAGING" }
         switch status {
@@ -101,7 +112,7 @@ struct StatusPillView: View {
         default: return status.uppercased()
         }
     }
-    
+
     private var backgroundColor: Color {
         switch status {
         case "pending_approval": return .orange
@@ -129,5 +140,5 @@ extension Incident {
 #Preview {
     let vm = IncidentListViewModel()
     vm.incidents = [.mockCrashloop]
-    return IncidentListView()
+    return IncidentListView(viewModel: vm)
 }
