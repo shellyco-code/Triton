@@ -182,7 +182,7 @@ def main() -> None:
                 triage_duration_ms=s["ms"],
                 prompt_tokens=s["tokens"][0],
                 completion_tokens=s["tokens"][1],
-                model="llama-3.3-70b-versatile",
+                model="openai/gpt-oss-120b",
                 proposed_action_type=s["action"],
                 proposed_target=s["pod"],
                 proposal_reason=s["reason"],

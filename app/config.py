@@ -41,7 +41,7 @@ class Settings:
 
     # LLM
     groq_api_key: str | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     max_agent_iterations: int = 6
     max_tool_output_chars: int = 6000
 

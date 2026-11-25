@@ -88,3 +88,41 @@ def test_parse_final_answer_handles_fences_and_prose():
     assert parse_final_answer(content).diagnosis == "x"
     assert parse_final_answer('{"diagnosis": ""}') is None  # empty diagnosis rejected
     assert parse_final_answer(None) is None
+
+
+class ToolUseFailed(Exception):
+    """Shape of groq.BadRequestError for a rejected tool call."""
+
+    body = {
+        "error": {"message": "attempted to call tool 'json' which was not in request.tools", "code": "tool_use_failed"}
+    }
+
+
+def test_malformed_tool_call_is_retried_with_a_hint(fake_k8s):
+    responses = [ToolUseFailed(), llm_message(tool_calls=[tool_call("get_pod_events")]), final_answer()]
+
+    class Flaky(FakeLLM):
+        def _create(self, **kwargs):
+            self.requests.append(kwargs)
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+    llm = Flaky([])
+    result = triage_pod(POD, llm_client=llm)
+    assert result.status == ActionStatus.PENDING_APPROVAL
+    assert result.tool_trace[0]["ok"] is False
+    assert "json" in result.tool_trace[0]["error"]
+    assert any("plain message text" in m["content"] for m in llm.requests[1]["messages"] if m["role"] == "user")
+
+
+def test_other_api_errors_still_raise(fake_k8s):
+    import pytest
+
+    class Boom(FakeLLM):
+        def _create(self, **kwargs):
+            raise RuntimeError("rate limited")
+
+    with pytest.raises(RuntimeError):
+        triage_pod(POD, llm_client=Boom([]))
