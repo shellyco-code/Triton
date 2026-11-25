@@ -1,62 +1,59 @@
 import Foundation
 import Observation
 
+@MainActor
 @Observable
-class IncidentListViewModel {
+final class IncidentListViewModel {
     var incidents: [Incident] = []
-    var isLoading: Bool = false
-    var errorMessage: String? = nil
-    
+    var isLoading = false
+    var errorMessage: String?
+    var lastActionMessage: String?
+
     private var pollTask: Task<Void, Never>?
-    
+
+    func incident(id: Int) -> Incident? {
+        incidents.first { $0.id == id }
+    }
+
     func startPolling() {
         pollTask?.cancel()
         pollTask = Task {
             await refresh()
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                if !Task.isCancelled {
-                    await refresh(silent: true)
-                }
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { break }
+                await refresh(silent: true)
             }
         }
     }
-    
+
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
     }
-    
+
     func refresh(silent: Bool = false) async {
-        if !silent {
-            await MainActor.run { isLoading = true }
-        }
-        
+        if !silent { isLoading = true }
+        defer { isLoading = false }
         do {
-            let fetched = try await APIClient.shared.fetchIncidents()
-            await MainActor.run {
-                self.incidents = fetched
-                self.errorMessage = nil
-                self.isLoading = false
-            }
+            incidents = try await APIClient.shared.fetchIncidents()
+            errorMessage = nil
         } catch {
-            await MainActor.run {
-                if !silent || self.incidents.isEmpty {
-                    self.errorMessage = error.localizedDescription
-                }
-                self.isLoading = false
+            // Don't nag on every background poll once data is on screen.
+            if !silent || incidents.isEmpty {
+                errorMessage = error.localizedDescription
             }
         }
     }
-    
-    func executeRemediation(for diagnosisId: Int) async {
+
+    func approveRestart(for incident: Incident) async {
+        guard let diagnosisId = incident.diagnosisId else { return }
         do {
-            let _ = try await APIClient.shared.executeRemediation(diagnosisId: diagnosisId)
-            await refresh()
+            let result = try await APIClient.shared.approveRemediation(diagnosisId: diagnosisId)
+            lastActionMessage = result.status == "executed" ? "Pod restarted." : result.detail
         } catch {
-            await MainActor.run {
-                self.errorMessage = "Failed to execute remediation: \(error.localizedDescription)"
-            }
+            errorMessage = error.localizedDescription
         }
+        await refresh(silent: true)
     }
 }

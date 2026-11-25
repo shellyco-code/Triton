@@ -75,7 +75,7 @@ def serialize_incident(inc: Incident) -> dict:
         "namespace": inc.namespace,
         "workload": inc.workload,
         "issues": inc.issues or [],
-        "detected_at": inc.detected_at.isoformat(),
+        "detected_at": inc.detected_at.isoformat(timespec="seconds"),
         "diagnosis_id": diag.id if diag else None,
         "diagnosis": diag.diagnosis_text if diag else None,
         "tool_trace": diag.tool_trace if diag else [],
@@ -85,7 +85,7 @@ def serialize_incident(inc: Incident) -> dict:
         "proposal_reason": diag.proposal_reason if diag else None,
         "action_status": diag.action_status if diag else None,
         "status_detail": diag.status_detail if diag else None,
-        "executed_at": diag.executed_at.isoformat() if diag and diag.executed_at else None,
+        "executed_at": diag.executed_at.isoformat(timespec="seconds") if diag and diag.executed_at else None,
     }
 
 

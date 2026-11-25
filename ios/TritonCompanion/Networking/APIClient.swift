@@ -1,58 +1,64 @@
 import Foundation
 
-enum APIError: Error {
+enum APIError: LocalizedError {
     case invalidURL
-    case requestFailed
+    case server(status: Int, detail: String?)
     case decodingFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL: return "The server URL in Settings is invalid."
+        case .server(let status, let detail): return detail.map { "\($0) (HTTP \(status))" } ?? "Server returned HTTP \(status)."
+        case .decodingFailed: return "Unexpected response from the server."
+        }
+    }
 }
 
 struct RemediationResponse: Codable {
-    let status: String
     let diagnosisId: Int
+    let status: String
+    let detail: String
 
     enum CodingKeys: String, CodingKey {
-        case status
+        case status, detail
         case diagnosisId = "diagnosis_id"
     }
 }
 
-class APIClient {
+private struct ErrorBody: Codable { let detail: String? }
+
+final class APIClient {
     static let shared = APIClient()
+    static let tokenAccount = "apiToken"
     private init() {}
 
     private var baseURL: String {
         UserDefaults.standard.string(forKey: "baseURL") ?? "http://127.0.0.1:8000"
     }
-    private var groqApiKey: String {
-        UserDefaults.standard.string(forKey: "groqApiKey") ?? ""
-    }
 
     func fetchIncidents() async throws -> [Incident] {
-        guard let url = URL(string: "\(baseURL)/incidents") else { throw APIError.invalidURL }
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else { throw APIError.requestFailed }
-        do {
-            return try JSONDecoder().decode([Incident].self, from: data)
-        } catch {
-            print("Decoding error: \(error)")
-            throw APIError.decodingFailed
-        }
+        try await send(path: "/incidents", method: "GET")
     }
 
-    func executeRemediation(diagnosisId: Int) async throws -> (status: String, diagnosisId: Int) {
-        guard let url = URL(string: "\(baseURL)/remediate/\(diagnosisId)") else { throw APIError.invalidURL }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        if !groqApiKey.isEmpty {
-            request.setValue(groqApiKey, forHTTPHeaderField: "X-Groq-Key")
+    func approveRemediation(diagnosisId: Int) async throws -> RemediationResponse {
+        try await send(path: "/remediate/\(diagnosisId)", method: "POST")
+    }
+
+    private func send<T: Decodable>(path: String, method: String) async throws -> T {
+        guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.httpMethod = method
+        if let token = Keychain.read(Self.tokenAccount), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else { throw APIError.requestFailed }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200...299).contains(status) else {
+            throw APIError.server(status: status, detail: try? JSONDecoder().decode(ErrorBody.self, from: data).detail)
+        }
         do {
-            let resp = try JSONDecoder().decode(RemediationResponse.self, from: data)
-            return (status: resp.status, diagnosisId: resp.diagnosisId)
+            return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw APIError.decodingFailed
         }

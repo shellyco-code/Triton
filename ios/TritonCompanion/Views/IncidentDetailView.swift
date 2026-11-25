@@ -2,111 +2,127 @@ import SwiftUI
 
 struct IncidentDetailView: View {
     @Bindable var viewModel: IncidentListViewModel
-    let incident: Incident
-    
+    let incidentId: Int
+    @State private var isApproving = false
+    @State private var confirmRestart = false
+
     var body: some View {
+        if let incident = viewModel.incident(id: incidentId) {
+            content(for: incident)
+        } else {
+            ContentUnavailableView("Incident not found", systemImage: "questionmark.circle")
+        }
+    }
+
+    private func content(for incident: Incident) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Header section
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(incident.podName)
-                        .font(.title2)
-                        .bold()
-                    
+                    Text(incident.podName).font(.title3).bold()
+                    Text("\(incident.namespace) · \(incident.workload ?? "unknown workload")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     StatusPillView(status: incident.actionStatus)
-                    
-                    if let executed = incident.executedAt {
-                        Text("Executed At: \(executed)")
+                    if let executed = incident.executedDate {
+                        Text("Restarted \(executed, format: .relative(presentation: .named))")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                
-                Divider()
-                
-                // Issues
-                if !incident.issues.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Detected Issues")
-                            .font(.headline)
-                        
-                        ForEach(incident.issues, id: \.self) { issue in
-                            Text("• \(issue)")
-                                .font(.subheadline)
+
+                section("Detected issues", show: !incident.issues.isEmpty) {
+                    ForEach(incident.issues, id: \.self) { Text("• \($0)").font(.subheadline) }
+                }
+
+                section("Diagnosis", show: incident.diagnosis != nil) {
+                    Text(incident.diagnosis ?? "")
+                        .font(.body)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+
+                section("Proposed action", show: incident.proposedActionType != nil) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(incident.proposedActionType ?? "") → \(incident.proposedTarget ?? "")")
+                            .font(.subheadline.monospaced())
+                        if let reason = incident.proposalReason { Text(reason).font(.subheadline) }
+                        if let detail = incident.statusDetail {
+                            Text("Outcome: \(detail)").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    Divider()
                 }
-                
-                // Diagnosis
-                if let diagnosis = incident.diagnosis {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Final Diagnosis")
-                            .font(.headline)
-                        
-                        Text(diagnosis)
-                            .font(.body)
-                            .padding()
-                            .background(Color(UIColor.secondarySystemBackground))
-                            .cornerRadius(8)
-                    }
-                    Divider()
-                }
-                
-                // Tool Trace
-                let trace = incident.decodeToolTrace()
-                if !trace.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Tool Execution Trace")
-                            .font(.headline)
-                        
-                        ForEach(Array(trace.enumerated()), id: \.offset) { _, tool in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("› \(tool.tool)")
-                                    .font(.subheadline)
-                                    .bold()
-                                    .foregroundColor(.orange)
-                                
-                                Text(String(describing: tool.input))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+
+                section("Tool execution trace", show: !incident.toolTrace.isEmpty) {
+                    ForEach(Array(incident.toolTrace.enumerated()), id: \.offset) { _, call in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text("› \(call.tool)").bold().foregroundStyle(call.ok == false ? .red : .orange)
+                                Spacer()
+                                if let ms = call.durationMs { Text("\(ms) ms").foregroundStyle(.secondary) }
                             }
-                            .padding(.vertical, 4)
-                            Divider()
+                            .font(.subheadline)
+                            if !call.inputDescription.isEmpty {
+                                Text(call.inputDescription).font(.caption).foregroundStyle(.secondary)
+                            }
+                            if let error = call.error { Text(error).font(.caption).foregroundStyle(.red) }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
-                
-                // Remediation Button
-                if incident.actionStatus == "pending_approval" {
-                    if let diagId = incident.diagnosisId {
-                        Button(action: {
+
+                if incident.canApproveRestart {
+                    Button {
+                        confirmRestart = true
+                    } label: {
+                        Label(isApproving ? "Restarting…" : "Approve restart", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(isApproving)
+                    .confirmationDialog(
+                        "Delete \(incident.podName) so its controller recreates it?",
+                        isPresented: $confirmRestart,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Restart pod", role: .destructive) {
                             Task {
-                                await viewModel.executeRemediation(for: diagId)
+                                isApproving = true
+                                await viewModel.approveRestart(for: incident)
+                                isApproving = false
                             }
-                        }) {
-                            Text("Execute Remediation")
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(10)
-                                .font(.headline)
                         }
-                        .padding(.top, 10)
                     }
+                }
+
+                if let message = viewModel.lastActionMessage {
+                    Text(message).font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .padding()
         }
-        .navigationTitle("Incident Details")
+        .navigationTitle("Incident")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func section<Content: View>(_ title: String, show: Bool, @ViewBuilder _ body: () -> Content) -> some View {
+        if show {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.headline)
+                body()
+            }
+            Divider()
+        }
     }
 }
 
 #Preview {
     let vm = IncidentListViewModel()
+    vm.incidents = [.mockCrashloop]
     return NavigationStack {
-        IncidentDetailView(viewModel: vm, incident: .mockCrashloop)
+        IncidentDetailView(viewModel: vm, incidentId: 1)
     }
 }

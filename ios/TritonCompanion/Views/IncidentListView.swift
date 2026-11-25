@@ -10,41 +10,53 @@ struct IncidentListView: View {
     var body: some View {
         NavigationStack {
             List(viewModel.incidents) { incident in
-                NavigationLink(destination: IncidentDetailView(viewModel: viewModel, incident: incident)) {
+                NavigationLink(value: incident.id) {
                     IncidentRowView(incident: incident)
                 }
             }
             .navigationTitle("Incidents")
+            .navigationDestination(for: Int.self) { id in
+                // Look the incident up by id so the detail screen reflects live polling updates.
+                IncidentDetailView(viewModel: viewModel, incidentId: id)
+            }
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    NavigationLink(destination: SettingsView()) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        SettingsView()
+                    } label: {
                         Image(systemName: "gear")
                     }
                 }
             }
+            .refreshable { await viewModel.refresh() }
             .overlay {
-                if viewModel.incidents.isEmpty && viewModel.isLoading {
-                    ProgressView("Loading...")
-                } else if viewModel.incidents.isEmpty {
-                    Text("No incidents found. Cluster is healthy.")
-                        .foregroundColor(.secondary)
+                if viewModel.incidents.isEmpty {
+                    if viewModel.isLoading {
+                        ProgressView("Loading…")
+                    } else {
+                        ContentUnavailableView(
+                            "No incidents",
+                            systemImage: "checkmark.shield",
+                            description: Text("The cluster looks healthy.")
+                        )
+                    }
                 }
             }
-            .alert("Error", isPresented: Binding(
-                get: { viewModel.errorMessage != nil },
-                set: { if !$0 { viewModel.errorMessage = nil } }
-            ), presenting: viewModel.errorMessage) { _ in
+            .alert(
+                "Error",
+                isPresented: Binding(
+                    get: { viewModel.errorMessage != nil },
+                    set: { if !$0 { viewModel.errorMessage = nil } }
+                ),
+                presenting: viewModel.errorMessage
+            ) { _ in
                 Button("OK") { viewModel.errorMessage = nil }
             } message: { msg in
                 Text(msg)
             }
         }
-        .onAppear {
-            viewModel.startPolling()
-        }
-        .onDisappear {
-            viewModel.stopPolling()
-        }
+        .onAppear { viewModel.startPolling() }
+        .onDisappear { viewModel.stopPolling() }
     }
 }
 
@@ -55,36 +67,21 @@ struct IncidentRowView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(incident.podName)
                 .font(.headline)
-
+                .lineLimit(1)
             HStack {
-                Text(relativeTime(from: incident.detectedAt))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
+                if let date = incident.detectedDate {
+                    Text(date, format: .relative(presentation: .named))
+                } else {
+                    Text(incident.detectedAt)
+                }
+                Text("· \(incident.namespace)")
                 Spacer()
-
                 StatusPillView(status: incident.actionStatus)
             }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
-    }
-
-    private func relativeTime(from isoString: String) -> String {
-        // Backend timestamps (Python datetime.isoformat()) look like
-        // "2026-08-25T14:46:10.432390" — no timezone suffix, microsecond precision.
-        // ISO8601DateFormatter requires a timezone designator and fails to parse this silently,
-        // so trim to whole-seconds precision and parse with an explicit UTC formatter instead.
-        let trimmed = String(isoString.prefix(19)) // "yyyy-MM-dd'T'HH:mm:ss"
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        guard let date = formatter.date(from: trimmed) else {
-            return isoString
-        }
-        let relativeFormatter = RelativeDateTimeFormatter()
-        relativeFormatter.unitsStyle = .abbreviated
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
@@ -92,49 +89,37 @@ struct StatusPillView: View {
     let status: String?
 
     var body: some View {
-        Text(displayString)
+        Text(label)
             .font(.caption2)
             .fontWeight(.bold)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(backgroundColor.opacity(0.2))
-            .foregroundColor(backgroundColor)
-            .cornerRadius(8)
+            .background(color.opacity(0.2))
+            .foregroundStyle(color)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var displayString: String {
-        guard let status = status else { return "TRIAGING" }
+    private var label: String {
         switch status {
-        case "pending_approval": return "PENDING APPROVAL"
-        case "executed": return "EXECUTED"
-        case "skipped_by_safety": return "SKIPPED"
-        case "parse_error": return "ERROR"
-        default: return status.uppercased()
+        case nil: return "TRIAGING"
+        case "pending_approval": return "NEEDS APPROVAL"
+        case "executed": return "RESTARTED"
+        case "skipped_by_safety": return "BLOCKED"
+        case "manual_intervention": return "NEEDS HUMAN"
+        case "parse_error": return "PARSE ERROR"
+        case let other?: return other.uppercased()
         }
     }
 
-    private var backgroundColor: Color {
+    private var color: Color {
         switch status {
         case "pending_approval": return .orange
         case "executed": return .green
+        case "skipped_by_safety", "failed": return .red
+        case "manual_intervention": return .blue
         default: return .gray
         }
     }
-}
-
-extension Incident {
-    static let mockCrashloop = Incident(
-        id: 1,
-        podName: "chaos-crashloop",
-        issues: ["waiting_reason:CrashLoopBackOff", "high_restart_count:5"],
-        detectedAt: "2026-08-25T14:46:10.432390",
-        diagnosis: "Root Cause: Container 'crasher' crashed repeatedly with exit code 1 ('simulated failure').\nEvidence: Log output shows process exited with status 1. Restart count is 5.\nRecommended Action: Fix exit error in container startup script.\nConfidence: 98%",
-        toolTrace: "[{\"tool\": \"get_pod_logs\", \"input\": {\"pod_name\": \"chaos-crashloop\", \"namespace\": \"default\"}}, {\"tool\": \"get_pod_events\", \"input\": {\"pod_name\": \"chaos-crashloop\", \"namespace\": \"default\"}}, {\"tool\": \"describe_pod\", \"input\": {\"pod_name\": \"chaos-crashloop\", \"namespace\": \"default\"}}]",
-        proposedActionType: "restart_pod",
-        actionStatus: "pending_approval",
-        executedAt: nil,
-        diagnosisId: 1
-    )
 }
 
 #Preview {
