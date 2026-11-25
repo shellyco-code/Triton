@@ -77,6 +77,19 @@ def test_already_executed_is_idempotent(fake_k8s):
     assert len(fake_k8s.deleted) == 1
 
 
+def test_cluster_outage_leaves_proposal_pending(fake_k8s, monkeypatch):
+    from app.k8s import client as k8s
+
+    def down(name, ns):
+        raise k8s.ClusterUnavailableError("no config")
+
+    monkeypatch.setattr(k8s, "get_pod_workload", down)
+    diag_id = make_diag()
+    outcome = execute_remediation(diag_id, approved_by_human=True)
+    assert outcome.changed is False
+    assert outcome.status == "pending_approval"
+
+
 def test_missing_diagnosis():
     with pytest.raises(DiagnosisNotFoundError):
         execute_remediation(999, approved_by_human=True)

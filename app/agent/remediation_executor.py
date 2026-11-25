@@ -101,6 +101,9 @@ def _evaluate_and_execute(db, diag: Diagnosis, incident: Incident, settings) -> 
 
     try:
         live_workload = k8s.get_pod_workload(target, namespace)
+    except k8s.ClusterUnavailableError as exc:
+        # Transient: leave it pending so it can be retried once the cluster is back.
+        return RemediationOutcome(diag.id, diag.action_status, f"cluster unavailable: {exc}", changed=False)
     except ApiException as exc:
         return _set(diag, ActionStatus.FAILED, f"could not read pod: {exc.status} {exc.reason}")
     if live_workload is None:

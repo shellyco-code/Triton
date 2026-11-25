@@ -31,24 +31,30 @@ class ClusterUnavailableError(RuntimeError):
     """Raised when the Kubernetes API cannot be reached."""
 
 
+_configured = False
+
+
 def load_k8s() -> bool:
-    """Load kubeconfig (local dev) or in-cluster config. Returns True on success."""
+    """Load in-cluster config, falling back to local kubeconfig. Returns True on success."""
+    global _configured
     try:
         config.load_incluster_config()
         logger.info("Loaded in-cluster Kubernetes config")
-        return True
+        _configured = True
     except config.ConfigException:
-        pass
-    try:
-        config.load_kube_config()
-        logger.info("Loaded local kubeconfig")
-        return True
-    except Exception as exc:  # noqa: BLE001 - kube config errors are varied
-        logger.warning("Could not load Kubernetes config: %s", exc)
-        return False
+        try:
+            config.load_kube_config()
+            logger.info("Loaded local kubeconfig")
+            _configured = True
+        except Exception as exc:  # noqa: BLE001 - kube config errors are varied
+            logger.warning("Could not load Kubernetes config: %s", exc)
+    return _configured
 
 
 def _core() -> client.CoreV1Api:
+    if not _configured:
+        # Without config the client silently targets localhost:80 and retries for ~12s.
+        raise ClusterUnavailableError("no Kubernetes config loaded (kubeconfig or in-cluster)")
     return client.CoreV1Api()
 
 
