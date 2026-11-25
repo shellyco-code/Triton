@@ -54,3 +54,34 @@ def test_main_writes_json_and_enforces_threshold(tmp_path):
     data = json.loads(out.read_text())
     assert data["summary"]["runs"] == len(SCENARIOS)
     assert code == 1  # no tools called -> nothing passes -> below threshold
+
+
+def test_rate_limits_are_waited_out_not_scored(monkeypatch):
+    sc = next(s for s in SCENARIOS if s.id == "oom-killed")
+    waits = []
+    monkeypatch.setattr(run.time, "sleep", waits.append)
+    responses = [
+        RuntimeError("Error code: 429 - Rate limit reached. Please try again in 1m2.5s. org_secret_123"),
+        llm_message(tool_calls=[tool_call("describe_pod")]),
+        final_answer(action="manual_intervention", target=sc.pod["name"], diagnosis="OOMKilled: memory limit"),
+    ]
+
+    class Limited(FakeLLM):
+        def _create(self, **kwargs):
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+    score = run.evaluate(sc, 1, Limited([]))
+    assert score.passed
+    assert waits == [63.5]
+
+
+def test_errors_do_not_leak_provider_details():
+    class Boom(FakeLLM):
+        def _create(self, **kwargs):
+            raise ValueError("bad request for org_secret_123")
+
+    score = run.evaluate(SCENARIOS[0], 1, Boom([]))
+    assert score.error == "ValueError"

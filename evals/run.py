@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 
@@ -63,12 +65,38 @@ def replay_cluster(sc: Scenario):
             setattr(k8s, name, fn)
 
 
-def evaluate(sc: Scenario, trial: int, llm_client=None) -> Score:
+_RETRY_AFTER = re.compile(r"try again in (?:(\d+)m)?([\d.]+)s")
+
+
+def _rate_limit_wait(exc: Exception) -> float | None:
+    """Seconds to wait if this is a provider rate limit (HTTP 429), else None."""
+    text = str(exc)
+    if "429" not in text and "rate limit" not in text.lower():
+        return None
+    match = _RETRY_AFTER.search(text)
+    if not match:
+        return 20.0
+    return int(match.group(1) or 0) * 60 + float(match.group(2)) + 1
+
+
+def _short(exc: Exception) -> str:
+    # Provider errors can include account identifiers; keep only the error class and code.
+    code = getattr(exc, "status_code", None)
+    return f"{type(exc).__name__}{f' (HTTP {code})' if code else ''}"
+
+
+def evaluate(sc: Scenario, trial: int, llm_client=None, max_rate_limit_retries: int = 5) -> Score:
     with replay_cluster(sc):
-        try:
-            result = triage_pod(sc.pod, llm_client=llm_client)
-        except Exception as exc:  # noqa: BLE001 - an eval run must survive API errors
-            return Score(sc.id, trial, False, False, False, False, None, 0, 0, 0, error=str(exc)[:200])
+        for attempt in range(max_rate_limit_retries + 1):
+            try:
+                result = triage_pod(sc.pod, llm_client=llm_client)
+                break
+            except Exception as exc:  # noqa: BLE001 - an eval run must survive API errors
+                wait = _rate_limit_wait(exc)
+                if wait is None or attempt == max_rate_limit_retries:
+                    return Score(sc.id, trial, False, False, False, False, None, 0, 0, 0, error=_short(exc))
+                print(f"  rate limited on {sc.id} #{trial}, waiting {wait:.0f}s", file=sys.stderr)
+                time.sleep(wait)
 
     proposal = result.proposal
     proposed = proposal.action if proposal else None
@@ -80,9 +108,9 @@ def evaluate(sc: Scenario, trial: int, llm_client=None) -> Score:
         action=action_ok,
         rootcause=any(term in text for term in sc.expect_any),
         safe=proposal is None or proposal.target == sc.pod["name"],
-        tools=len(result.tool_trace) > 0,
+        tools=any(t.get("ok") for t in result.tool_trace),
         proposed=proposed,
-        tool_calls=len(result.tool_trace),
+        tool_calls=sum(1 for t in result.tool_trace if t.get("ok")),
         duration_ms=result.duration_ms,
         tokens=result.prompt_tokens + result.completion_tokens,
     )

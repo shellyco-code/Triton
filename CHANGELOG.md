@@ -2,6 +2,18 @@
 
 Notable changes. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Default model is now `openai/gpt-oss-120b` (Groq retired `llama-3.3-70b-versatile`).
+- Clearer restart vs. manual-fix criteria in the system prompt (eval action accuracy 83% -> 100%).
+
+### Fixed
+- Malformed tool calls rejected by the provider (HTTP 400 `tool_use_failed`) no longer abort the
+  triage; the error is fed back to the model and the turn is retried.
+- Eval harness waits out rate limits instead of scoring them as failures, and no longer prints
+  provider error bodies.
+
 ## [1.1.0] - 2026-11-25
 
 ### Fixed

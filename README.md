@@ -10,7 +10,7 @@ root-cause diagnosis, and proposes a fix. Restarts run only after they pass a se
 **deterministic safety rails**, and by default only after a human approves them.
 
 ![Triton dashboard](docs/dashboard.png)
-<sub>Dashboard with sample data (`make demo`). Each incident shows the diagnosis, the proposed action and its safety outcome, and the agent's investigation step by step.</sub>
+<sub>Running against a local kind cluster with the chaos scenarios deployed. Each incident shows the diagnosis, the proposed action and its safety outcome, and every tool call the agent made.</sub>
 
 ## Design notes
 
@@ -35,7 +35,7 @@ flowchart LR
     Poller --> Agent
     API[FastAPI<br/>/scan /triage] --> Agent
     Agent[Triage agent<br/>LLM tool-calling loop] -->|get_pod_logs<br/>describe_pod<br/>get_pod_events| P
-    Agent <-->|chat + tools| LLM[(Groq<br/>Llama 3.3 70B)]
+    Agent <-->|chat + tools| LLM[(Groq<br/>gpt-oss-120b)]
     Agent --> DB[(SQLite<br/>incidents + diagnoses)]
     DB --> Exec[Remediation executor<br/>safety rails]
     Exec -->|delete pod| P
@@ -157,6 +157,33 @@ GROQ_API_KEY=... python -m evals.run --trials 3 --json results.json
 
 It can also run in CI through the manual **Agent evals** workflow (needs a `GROQ_API_KEY` secret).
 
+### Results
+
+`openai/gpt-oss-120b` on Groq, 6 scenarios x 3 trials (raw data: [`evals/results.json`](evals/results.json)):
+
+| Metric | Result |
+|---|---|
+| Runs passing all four checks | **18 / 18** |
+| Correct action (restart vs. manual) | 100% |
+| Root cause named in diagnosis | 100% |
+| Proposal stayed on the incident pod (incl. injection case) | 100% |
+| Median triage time / tokens | 11.3 s / ~3.4k |
+
+How it got there:
+
+- **First run, 83%.** Root cause and safety were already perfect, but the agent never proposed a
+  restart, even for a queue failover. The prompt only listed reasons *not* to restart. I rewrote
+  the action criteria (transient vs. deterministic failures) and the transient case started passing.
+- **Next run, 7 of 18 crashed.** The model sometimes emitted malformed tool calls (invalid JSON, or
+  calling a made-up `json` tool to deliver its answer), which the API rejects with HTTP 400. The loop
+  now feeds that error back to the model and retries within the turn budget instead of failing the
+  whole triage.
+- **Rate limits.** The free tier's tokens-per-minute cap caused 429s; the harness now waits them out
+  instead of counting them as failures.
+
+Caveats: six scenarios is a small set, and root cause is scored by keyword match, so treat these
+numbers as a regression check rather than a benchmark. New scenarios are very welcome.
+
 ## Observability
 
 - **Prometheus** at `/metrics`:
@@ -172,7 +199,7 @@ It can also run in CI through the manual **Agent evals** workflow (needs a `GROQ
 ## Development
 
 ```bash
-make test        # 42 tests, no cluster or API key needed (fake LLM + fake k8s)
+make test        # 46 tests, no cluster or API key needed (fake LLM + fake k8s)
 make lint
 make demo        # dashboard on sample data, no cluster needed
 ```
