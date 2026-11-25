@@ -15,6 +15,7 @@ from fastapi.concurrency import run_in_threadpool
 from app import services
 from app.config import get_settings
 from app.k8s.client import ClusterUnavailableError, list_unhealthy_pods
+from app.observability import record_scan
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,9 @@ def poll_once() -> int:
         pods = list_unhealthy_pods(settings.watch_namespace, settings.pending_grace_seconds)
     except ClusterUnavailableError as exc:
         logger.warning("Cluster unavailable, skipping scan: %s", exc)
+        record_scan(ok=False, error=str(exc)[:300])
         return 0
+    record_scan(ok=True, unhealthy=len(pods))
 
     triaged = 0
     for pod in pods:

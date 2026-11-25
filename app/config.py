@@ -63,6 +63,9 @@ class Settings:
     # API auth for mutating endpoints. Unset = open (local dev only).
     api_token: str | None = None
 
+    # Slack-compatible incoming webhook for incident / remediation notifications.
+    notify_webhook_url: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -83,4 +86,5 @@ def get_settings() -> Settings:
         restart_window_minutes=_int("RESTART_WINDOW_MINUTES", Settings.restart_window_minutes),
         protected_namespaces=frozenset(ns.strip() for ns in protected.split(",") if ns.strip()),
         api_token=_optional("TRITON_API_TOKEN"),
+        notify_webhook_url=_optional("NOTIFY_WEBHOOK_URL"),
     )

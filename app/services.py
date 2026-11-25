@@ -12,7 +12,8 @@ from sqlalchemy.orm import selectinload
 
 from app.agent.remediation_executor import execute_remediation
 from app.agent.triage_agent import TriageResult, triage_pod
-from app.db.models import Diagnosis, Incident, SessionLocal, utcnow
+from app.db.models import ActionStatus, Diagnosis, Incident, SessionLocal, utcnow
+from app.observability import REMEDIATIONS, notify, record_triage_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ def record_triage(pod_summary: dict, result: TriageResult) -> tuple[int, int]:
             diagnosis_text=result.diagnosis,
             tool_trace=result.tool_trace,
             agent_iterations=result.iterations,
+            triage_duration_ms=result.duration_ms,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            model=result.model,
             proposed_action_type=proposal.action if proposal else None,
             proposed_target=proposal.target if proposal else None,
             proposal_reason=proposal.reason if proposal else None,
@@ -45,7 +50,12 @@ def triage_and_record(pod_summary: dict, *, api_key: str | None = None, auto_rem
     """Run the agent on one pod, store the result, optionally attempt remediation."""
     result = triage_pod(pod_summary, api_key=api_key)
     incident_id, diagnosis_id = record_triage(pod_summary, result)
-    outcome = execute_remediation(diagnosis_id) if auto_remediate else None
+    record_triage_metrics(pod_summary["namespace"], result)
+    notify(
+        f":rotating_light: *{pod_summary['namespace']}/{pod_summary['name']}* "
+        f"({', '.join(pod_summary['issues'])})\n{result.diagnosis}\n_Status: {result.status.value}_"
+    )
+    outcome = remediate(diagnosis_id, approved_by_human=False) if auto_remediate else None
     logger.info(
         "Triaged %s/%s -> %s (incident %d, %d tool calls)",
         pod_summary["namespace"],
@@ -55,6 +65,16 @@ def triage_and_record(pod_summary: dict, *, api_key: str | None = None, auto_rem
         len(result.tool_trace),
     )
     return {"incident_id": incident_id, "diagnosis_id": diagnosis_id}
+
+
+def remediate(diagnosis_id: int, *, approved_by_human: bool):
+    """Run the executor and emit metrics/notifications for real outcomes."""
+    outcome = execute_remediation(diagnosis_id, approved_by_human=approved_by_human)
+    if outcome.changed:
+        REMEDIATIONS.labels(outcome.status).inc()
+        icon = ":white_check_mark:" if outcome.status == ActionStatus.EXECUTED.value else ":no_entry:"
+        notify(f"{icon} Remediation for diagnosis {diagnosis_id}: *{outcome.status}* - {outcome.detail}")
+    return outcome
 
 
 def recently_triaged(namespace: str, workload: str, cooldown_minutes: int) -> bool:
@@ -80,6 +100,9 @@ def serialize_incident(inc: Incident) -> dict:
         "diagnosis": diag.diagnosis_text if diag else None,
         "tool_trace": diag.tool_trace if diag else [],
         "agent_iterations": diag.agent_iterations if diag else None,
+        "triage_duration_ms": diag.triage_duration_ms if diag else None,
+        "tokens": (diag.prompt_tokens + diag.completion_tokens) if diag else None,
+        "model": diag.model if diag else None,
         "proposed_action_type": diag.proposed_action_type if diag else None,
         "proposed_target": diag.proposed_target if diag else None,
         "proposal_reason": diag.proposal_reason if diag else None,
@@ -95,6 +118,29 @@ def list_incidents(limit: int = 100, namespace: str | None = None) -> list[dict]
         if namespace:
             stmt = stmt.where(Incident.namespace == namespace)
         return [serialize_incident(i) for i in db.scalars(stmt.limit(limit))]
+
+
+def summary_stats() -> dict:
+    """Aggregate numbers for the dashboard header and README metrics."""
+    from sqlalchemy import func
+
+    with SessionLocal() as db:
+        by_status = dict(
+            db.execute(select(Diagnosis.action_status, func.count()).group_by(Diagnosis.action_status)).all()
+        )
+        avg_ms, avg_tokens = db.execute(
+            select(
+                func.avg(Diagnosis.triage_duration_ms),
+                func.avg(Diagnosis.prompt_tokens + Diagnosis.completion_tokens),
+            ).where(Diagnosis.model.is_not(None))
+        ).one()
+        total = db.scalar(select(func.count()).select_from(Incident)) or 0
+    return {
+        "total_incidents": total,
+        "by_status": by_status,
+        "avg_triage_ms": round(avg_ms) if avg_ms else None,
+        "avg_tokens": round(avg_tokens) if avg_tokens else None,
+    }
 
 
 def get_incident(incident_id: int) -> dict | None:

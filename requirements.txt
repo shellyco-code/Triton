@@ -5,3 +5,5 @@ groq==1.7.0
 sqlalchemy==2.0.36
 pydantic==2.9.2
 python-dotenv==1.0.1
+prometheus-client==0.21.1
+httpx==0.28.1

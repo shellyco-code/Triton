@@ -106,6 +106,10 @@ class TriageResult:
     status: ActionStatus
     tool_trace: list[dict] = field(default_factory=list)
     iterations: int = 0
+    duration_ms: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    model: str | None = None
 
 
 def make_groq_client(api_key: str | None):
@@ -190,15 +194,34 @@ def _assistant_message(msg) -> dict:
     }
 
 
+class _Usage:
+    def __init__(self) -> None:
+        self.prompt = 0
+        self.completion = 0
+
+    def add(self, response) -> None:
+        usage = getattr(response, "usage", None)
+        self.prompt += getattr(usage, "prompt_tokens", 0) or 0
+        self.completion += getattr(usage, "completion_tokens", 0) or 0
+
+
 def triage_pod(pod_summary: dict, *, api_key: str | None = None, llm_client=None) -> TriageResult:
     """
     Investigate one unhealthy pod (a dict from `list_unhealthy_pods`).
     `llm_client` is any object exposing `chat.completions.create` (injected in tests).
     """
     settings = get_settings()
-    llm = llm_client or make_groq_client(api_key or settings.groq_api_key)
-    impls = _tool_impls(pod_summary["name"], pod_summary["namespace"])
+    started = time.perf_counter()
+    usage = _Usage()
+    result = _run_loop(pod_summary, settings, llm_client or make_groq_client(api_key or settings.groq_api_key), usage)
+    result.duration_ms = round((time.perf_counter() - started) * 1000)
+    result.prompt_tokens, result.completion_tokens = usage.prompt, usage.completion
+    result.model = settings.groq_model
+    return result
 
+
+def _run_loop(pod_summary: dict, settings, llm, usage: _Usage) -> TriageResult:
+    impls = _tool_impls(pod_summary["name"], pod_summary["namespace"])
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
@@ -208,16 +231,20 @@ def triage_pod(pod_summary: dict, *, api_key: str | None = None, llm_client=None
     ]
     trace: list[dict] = []
 
-    for iteration in range(1, settings.max_agent_iterations + 1):
+    def ask(tool_choice: str):
         response = llm.chat.completions.create(
             model=settings.groq_model,
             messages=messages,
             tools=TOOLS,
-            tool_choice="auto",
+            tool_choice=tool_choice,
             temperature=0,
             max_tokens=1024,
         )
-        msg = response.choices[0].message
+        usage.add(response)
+        return response.choices[0].message
+
+    for iteration in range(1, settings.max_agent_iterations + 1):
+        msg = ask("auto")
         if not msg.tool_calls:
             return _finalize(msg.content, trace, iteration)
 
@@ -230,7 +257,4 @@ def triage_pod(pod_summary: dict, *, api_key: str | None = None, llm_client=None
     # Budget exhausted: demand an answer with tools disabled.
     logger.warning("Agent hit iteration limit (%d) for %s", settings.max_agent_iterations, pod_summary["name"])
     messages.append({"role": "user", "content": "Tool budget exhausted. Give your final JSON answer now."})
-    response = llm.chat.completions.create(
-        model=settings.groq_model, messages=messages, tool_choice="none", tools=TOOLS, temperature=0, max_tokens=1024
-    )
-    return _finalize(response.choices[0].message.content, trace, settings.max_agent_iterations + 1)
+    return _finalize(ask("none").content, trace, settings.max_agent_iterations + 1)

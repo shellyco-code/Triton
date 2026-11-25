@@ -78,6 +78,10 @@ class Diagnosis(Base):
     diagnosis_text: Mapped[str] = mapped_column(Text)
     tool_trace: Mapped[list] = mapped_column(JSON, default=list)
     agent_iterations: Mapped[int] = mapped_column(default=0)
+    triage_duration_ms: Mapped[int] = mapped_column(default=0)
+    prompt_tokens: Mapped[int] = mapped_column(default=0)
+    completion_tokens: Mapped[int] = mapped_column(default=0)
+    model: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     proposed_action_type: Mapped[str | None] = mapped_column(String)

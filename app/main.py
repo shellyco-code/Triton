@@ -16,18 +16,21 @@ import groq
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, RedirectResponse
+from prometheus_client import make_asgi_app
 
 from app import services
 from app.agent.poller import poll_cluster
-from app.agent.remediation_executor import DiagnosisNotFoundError, execute_remediation
+from app.agent.remediation_executor import DiagnosisNotFoundError
 from app.config import get_settings
 from app.db.models import init_db
 from app.k8s.client import ClusterUnavailableError, list_unhealthy_pods, load_k8s
+from app.observability import status_snapshot, update_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("triton")
 
 DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
+VERSION = "1.1.0"
 
 
 @asynccontextmanager
@@ -40,10 +43,18 @@ async def lifespan(app: FastAPI):
         logger.warning("TRITON_API_TOKEN is not set - mutating endpoints are unauthenticated (dev mode)")
 
     poller = None
-    if settings.enable_poller and k8s_ready and settings.groq_api_key:
+    note = None
+    if not settings.enable_poller:
+        note = "disabled by ENABLE_POLLER=false"
+    elif not k8s_ready:
+        note = "no Kubernetes config found"
+    elif not settings.groq_api_key:
+        note = "GROQ_API_KEY not set"
+    else:
         poller = asyncio.create_task(poll_cluster())
-    elif settings.enable_poller:
-        logger.warning("Poller disabled: needs a reachable cluster and GROQ_API_KEY")
+    if note:
+        logger.warning("Poller not running: %s", note)
+    update_status(k8s_connected=k8s_ready, poller_running=poller is not None, poller_note=note)
 
     yield
 
@@ -53,7 +64,8 @@ async def lifespan(app: FastAPI):
             await poller
 
 
-app = FastAPI(title="Triton", description="AI triage agent for Kubernetes", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Triton", description="AI triage agent for Kubernetes", version=VERSION, lifespan=lifespan)
+app.mount("/metrics", make_asgi_app())
 
 
 # --- Dependencies -----------------------------------------------------------------------
@@ -86,6 +98,29 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/status")
+def status():
+    """Runtime state for the dashboard: cluster link, poller, last scan, safety config."""
+    settings = get_settings()
+    return {
+        "version": VERSION,
+        "model": settings.groq_model,
+        "auto_remediate": settings.auto_remediate,
+        "api_token_required": settings.api_token is not None,
+        "watch_namespace": settings.watch_namespace,
+        "poll_interval_seconds": settings.poll_interval_seconds,
+        "max_restarts_per_window": settings.max_restarts_per_window,
+        "restart_window_minutes": settings.restart_window_minutes,
+        "protected_namespaces": sorted(settings.protected_namespaces),
+        **status_snapshot(),
+    }
+
+
+@app.get("/stats")
+def stats():
+    return services.summary_stats()
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -141,7 +176,7 @@ def incident(incident_id: int):
 async def remediate(diagnosis_id: int):
     """Human approval: run the proposed action through every safety rail."""
     try:
-        outcome = await run_in_threadpool(execute_remediation, diagnosis_id, approved_by_human=True)
+        outcome = await run_in_threadpool(services.remediate, diagnosis_id, approved_by_human=True)
     except DiagnosisNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Diagnosis not found") from exc
     if not outcome.changed:
