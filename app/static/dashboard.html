@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Fleet Triage Dashboard</title>
+<title>Triton Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -284,200 +284,221 @@ color:var(--text-secondary);
 background:rgba(125,133,144,0.1);
 border-color:rgba(125,133,144,0.3);
 }
+.badge-manual {
+color:#60a5fa;
+background:rgba(96,165,250,0.1);
+border-color:rgba(96,165,250,0.3);
+}
+.meta-row{
+font-family:var(--mono);
+font-size:.75rem;
+color:var(--text-secondary);
+margin:0 0 .875rem;
+display:flex;
+flex-wrap:wrap;
+gap:.35rem 1.25rem;
+}
+.meta-row b{color:var(--text-primary);font-weight:500;}
+.tool-err{color:#ef4444;}
+.actions{display:flex;align-items:center;gap:.75rem;margin-top:.875rem;flex-wrap:wrap;}
+.btn{
+background:var(--accent);
+color:#000;
+border:none;
+padding:.45rem .9rem;
+border-radius:4px;
+font-size:.78rem;
+font-weight:600;
+cursor:pointer;
+}
+.btn:disabled{opacity:.5;cursor:wait;}
+.token-input{
+background:var(--bg-card);
+border:1px solid var(--border);
+color:var(--text-primary);
+padding:.4rem .6rem;
+border-radius:4px;
+font-family:var(--mono);
+font-size:.75rem;
+width:220px;
+}
+.banner{
+font-family:var(--mono);
+font-size:.78rem;
+padding:.6rem .8rem;
+border-radius:4px;
+margin-bottom:.75rem;
+display:none;
+border:1px solid rgba(239,68,68,.3);
+background:rgba(239,68,68,.08);
+color:#fca5a5;
+}
+.banner.show{display:block;}
+.ns{color:var(--text-muted);font-weight:400;}
+@media (max-width:640px){
+body{padding:1rem;}
+header{flex-direction:column;align-items:flex-start;gap:.75rem;}
+.token-input{width:100%;}
+}
 </style>
 </head>
 <body>
 <div class="container">
 <header>
-<div style="display: flex; align-items: center; gap: 1rem;">
-    <h1>Fleet Triage Dashboard</h1>
-    <div class="status-badge">
-    <div class="dot"></div>
-    Live Polling
-    </div>
+<div style="display:flex;align-items:center;gap:1rem;">
+<h1>Triton</h1>
+<div class="status-badge"><div class="dot"></div>Live</div>
 </div>
-<div style="display: flex; align-items: center; gap: 0.5rem;">
-    <input type="password" id="groq-key-input" placeholder="Groq API Key (Optional)" 
-           style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); padding: 0.4rem 0.6rem; border-radius: 4px; font-family: var(--mono); font-size: 0.75rem; width: 200px;">
-    <button onclick="setApiKey()" style="background: var(--accent); color: #000; border: none; padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer;">Set</button>
+<div style="display:flex;align-items:center;gap:.5rem;">
+<input type="password" id="token-input" class="token-input" placeholder="API token (if server requires one)" autocomplete="off">
+<button class="btn" onclick="setToken()">Set</button>
 </div>
 </header>
+<div id="banner" class="banner"></div>
 <div id="incidents-container">
 <div class="empty-state">Loading incidents...</div>
 </div>
 </div>
 <script>
-let expandedIncidents=new Set();
-let customApiKey = '';
+const expandedIncidents = new Set();
+let apiToken = '';
 
-function setApiKey() {
-    const input = document.getElementById('groq-key-input');
-    customApiKey = input.value.trim();
-    if (customApiKey) {
-        input.placeholder = 'Key set in memory';
-        input.value = '';
-        alert('API Key set for this session!');
-    }
+function setToken() {
+  const input = document.getElementById('token-input');
+  apiToken = input.value.trim();
+  input.value = '';
+  input.placeholder = apiToken ? 'Token set for this tab' : 'API token (if server requires one)';
 }
 
-function toggleIncident(id){
-const card=document.getElementById(`incident-${id}`);
-if(card.classList.contains('expanded')){
-card.classList.remove('expanded');
-expandedIncidents.delete(id);
-}else{
-card.classList.add('expanded');
-expandedIncidents.add(id);
-}
+function showBanner(msg) {
+  const b = document.getElementById('banner');
+  b.textContent = msg || '';
+  b.classList.toggle('show', !!msg);
 }
 
-function formatRelativeTime(isoString){
-const date=new Date(isoString);
-const now=new Date();
-const diffMs=now-date;
-const future=diffMs<0;
-const absMs=Math.abs(diffMs);
-const seconds=Math.floor(absMs/1000);
-const minutes=Math.floor(seconds/60);
-const hours=Math.floor(minutes/60);
-const days=Math.floor(hours/24);
-const months=Math.floor(days/30);
-const years=Math.floor(days/365);
-let value;
-if(seconds<10)value='now';
-else if(seconds<60)value=`${seconds}s`;
-else if(minutes<60)value=`${minutes}m`;
-else if(hours<24)value=`${hours}h`;
-else if(days<30)value=`${days}d`;
-else if(months<12)value=`${months}mo`;
-else value=`${years}y`;
-if(value==='now')return value;
-return future?`in ${value}`:`${value} ago`;
+function toggleIncident(id) {
+  const card = document.getElementById(`incident-${id}`);
+  if (expandedIncidents.has(id)) { expandedIncidents.delete(id); card.classList.remove('expanded'); }
+  else { expandedIncidents.add(id); card.classList.add('expanded'); }
 }
 
-function formatTime(isoString){
-return formatRelativeTime(isoString);
+function formatRelativeTime(isoString) {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const s = Math.floor(Math.abs(diff) / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (s < 10) return 'now';
+  const v = s < 60 ? `${s}s` : m < 60 ? `${m}m` : h < 24 ? `${h}h` : `${d}d`;
+  return diff < 0 ? `in ${v}` : `${v} ago`;
 }
 
-function escapeHtml(value){
-return String(value??'')
-.replace(/&/g,'&amp;')
-.replace(/</g,'&lt;')
-.replace(/>/g,'&gt;')
-.replace(/"/g,'&quot;')
-.replace(/'/g,'&#039;');
+function escapeHtml(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
-function formatPreview(diagnosis){
-const fallback='Agent triage in progress...';
-const text=String(diagnosis||fallback).replace(/\s+/g,' ').trim();
-return text.length>120?`${text.slice(0,117)}...`:text;
+function formatPreview(diagnosis) {
+  const text = String(diagnosis || 'Agent triage in progress...').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 }
 
-function formatTrace(traceJson){
-try{
-const trace=JSON.parse(traceJson);
-if(!trace||trace.length===0)return'<div class="trace-item">No tools called.</div>';
-return trace.map(t=>{
-return `<div class="trace-item">
-<span class="tool-name">› ${escapeHtml(t.tool)}</span>
-<span class="tool-args">${escapeHtml(JSON.stringify(t.input))}</span>
-</div>`;
-}).join('');
-}catch(e){
-return'<div class="trace-item">Trace data unavailable.</div>';
-}
+function formatTrace(trace) {
+  if (!Array.isArray(trace) || trace.length === 0) return '<div class="trace-item">No tools called.</div>';
+  return trace.map(t => {
+    const args = t.input && Object.keys(t.input).length ? JSON.stringify(t.input) : '';
+    const timing = t.duration_ms != null ? ` <span class="tool-args">${t.duration_ms}ms</span>` : '';
+    const err = t.ok === false ? `<div class="tool-err">${escapeHtml(t.error)}</div>` : '';
+    return `<div class="trace-item"><span class="tool-name">› ${escapeHtml(t.tool)}</span>
+      <span class="tool-args">${escapeHtml(args)}</span>${timing}${err}</div>`;
+  }).join('');
 }
 
-async function fetchIncidents(){
-try{
-const headers = {};
-if (customApiKey) {
-    headers['X-Groq-Key'] = customApiKey;
-}
-const response=await fetch('/incidents', { headers });
-const incidents=await response.json();
-const container=document.getElementById('incidents-container');
-if(incidents.length===0){
-container.innerHTML='<div class="empty-state">No incidents found. Cluster is healthy.</div>';
-return;
-}
-incidents.sort((a,b)=>new Date(b.detected_at)-new Date(a.detected_at));
-let html='';
-incidents.forEach(inc=>{
-    const hasDiagnosis=!!inc.diagnosis;
-    const statusClass=hasDiagnosis?'status-resolved':'status-pending';
-    const statusLabel=hasDiagnosis?'diagnosed':'triaging';
-    const isExpanded=expandedIncidents.has(inc.id)?'expanded':'';
-    const preview=escapeHtml(formatPreview(inc.diagnosis));
-    
-    let badgeHtml = '';
-    if (inc.action_status) {
-        let badgeClass = 'badge-error';
-        let badgeText = inc.action_status;
-        
-        if (inc.action_status === 'executed') {
-            badgeClass = 'badge-executed';
-            const timeStr = inc.executed_at ? new Date(inc.executed_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
-            badgeText = `Executed (Restarted at ${timeStr})`;
-        } else if (inc.action_status === 'pending_approval') {
-            badgeClass = 'badge-pending';
-            badgeText = 'Pending Approval';
-        } else if (inc.action_status === 'skipped_by_safety') {
-            badgeClass = 'badge-skipped';
-            badgeText = 'Skipped by Safety Limit';
-        } else if (inc.action_status === 'parse_error') {
-            badgeClass = 'badge-error';
-            badgeText = 'Parse Error';
-        }
-        badgeHtml = `<span class="remediation-badge ${badgeClass}">${badgeText}</span>`;
-    }
+const BADGES = {
+  executed: ['badge-executed', inc => `Restarted ${inc.executed_at ? formatRelativeTime(inc.executed_at) : ''}`],
+  pending_approval: ['badge-pending', () => 'Restart pending approval'],
+  skipped_by_safety: ['badge-skipped', () => 'Blocked by safety rail'],
+  manual_intervention: ['badge-manual', () => 'Needs a human'],
+  failed: ['badge-skipped', () => 'Remediation failed'],
+  parse_error: ['badge-error', () => 'Parse error'],
+};
 
-    let bodyContent='';
-    if(hasDiagnosis){
-bodyContent=`
-<h3>Final Diagnosis</h3>
-<pre>${escapeHtml(inc.diagnosis)}</pre>
-<h3>Tool Execution Trace</h3>
-<div class="trace-box">
-${formatTrace(inc.tool_trace)}
-</div>
-`;
-}else{
-bodyContent=`
-<div class="empty-state" style="padding:1.25rem;">
-<span>Agent is currently triaging this pod...</span>
-</div>
-`;
+function badge(inc) {
+  if (!inc.action_status) return '';
+  const [cls, label] = BADGES[inc.action_status] || ['badge-error', () => inc.action_status];
+  return `<span class="remediation-badge ${cls}">${escapeHtml(label(inc))}</span>`;
 }
-html+=`
-<div class="incident-card ${statusClass} ${isExpanded}" id="incident-${inc.id}">
-<div class="incident-header" onclick="toggleIncident(${inc.id})">
-<div class="incident-title">
-<span class="pod-name">${escapeHtml(inc.pod_name)}</span>
-<div class="incident-meta">
-<span class="detected-time">${formatTime(inc.detected_at)}</span>
-<span class="status-label">${statusLabel}</span>
-${badgeHtml}
-</div>
-<span class="diagnosis-preview">${preview}</span>
-</div>
-<div class="expand-icon" aria-hidden="true">&#9662;</div>
-</div>
-<div class="incident-body">
-${bodyContent}
-</div>
-</div>
-`;
-});
-container.innerHTML=html;
-}catch(error){
-console.error('Failed to fetch incidents:',error);
+
+function authHeaders() {
+  return apiToken ? { Authorization: `Bearer ${apiToken}` } : {};
 }
+
+async function approve(diagnosisId, button) {
+  button.disabled = true;
+  try {
+    const r = await fetch(`/remediate/${diagnosisId}`, { method: 'POST', headers: authHeaders() });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) showBanner(`Remediation ${r.status}: ${body.detail || r.statusText}`);
+    else showBanner(body.status === 'executed' ? '' : `Not executed: ${body.detail}`);
+  } catch (e) {
+    showBanner(`Request failed: ${e}`);
+  }
+  await fetchIncidents();
+}
+
+function renderIncident(inc) {
+  const hasDiagnosis = !!inc.diagnosis;
+  const meta = `<div class="meta-row">
+    <span>namespace <b>${escapeHtml(inc.namespace)}</b></span>
+    <span>workload <b>${escapeHtml(inc.workload)}</b></span>
+    <span>issues <b>${escapeHtml((inc.issues || []).join(', '))}</b></span>
+    ${inc.agent_iterations ? `<span>agent turns <b>${inc.agent_iterations}</b></span>` : ''}
+  </div>`;
+  const outcome = inc.status_detail ? '\n\nOutcome: ' + escapeHtml(inc.status_detail) : '';
+  const reason = inc.proposal_reason ? '\n' + escapeHtml(inc.proposal_reason) : '';
+  const proposal = inc.proposed_action_type
+    ? `<h3>Proposed action</h3><pre>${escapeHtml(inc.proposed_action_type)} → ${escapeHtml(inc.proposed_target)}${reason}${outcome}</pre>`
+    : '';
+  const canApprove = inc.action_status === 'pending_approval' && inc.proposed_action_type === 'restart_pod';
+  const actions = canApprove ? `<div class="actions">
+    <button class="btn" onclick="event.stopPropagation(); approve(${inc.diagnosis_id}, this)">Approve restart</button>
+    <span class="tool-args">Runs every safety rail before deleting the pod.</span></div>` : '';
+  const body = hasDiagnosis
+    ? `${meta}<h3>Diagnosis</h3><pre>${escapeHtml(inc.diagnosis)}</pre>${proposal}
+       <h3>Tool execution trace</h3><div class="trace-box">${formatTrace(inc.tool_trace)}</div>${actions}`
+    : `${meta}<div class="empty-state" style="padding:1.25rem;">Agent is triaging this pod...</div>`;
+  const cardState = hasDiagnosis ? 'status-resolved' : 'status-pending';
+  const expanded = expandedIncidents.has(inc.id) ? 'expanded' : '';
+
+  return `<div class="incident-card ${cardState} ${expanded}" id="incident-${inc.id}">
+    <div class="incident-header" onclick="toggleIncident(${inc.id})">
+      <div class="incident-title">
+        <span class="pod-name">${escapeHtml(inc.pod_name)} <span class="ns">${escapeHtml(inc.namespace)}</span></span>
+        <div class="incident-meta">
+          <span class="detected-time">${formatRelativeTime(inc.detected_at)}</span>
+          ${badge(inc)}
+        </div>
+        <span class="diagnosis-preview">${escapeHtml(formatPreview(inc.diagnosis))}</span>
+      </div>
+      <div class="expand-icon" aria-hidden="true">&#9662;</div>
+    </div>
+    <div class="incident-body">${body}</div>
+  </div>`;
+}
+
+async function fetchIncidents() {
+  const container = document.getElementById('incidents-container');
+  try {
+    const r = await fetch('/incidents');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const incidents = await r.json();
+    container.innerHTML = incidents.length
+      ? incidents.map(renderIncident).join('')
+      : '<div class="empty-state">No incidents yet. Cluster looks healthy.</div>';
+  } catch (e) {
+    showBanner(`Could not load incidents: ${e.message}`);
+  }
 }
 
 fetchIncidents();
-setInterval(fetchIncidents,10000);
+setInterval(fetchIncidents, 10000);
 </script>
 </body>
 </html>

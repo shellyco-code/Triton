@@ -1,155 +1,102 @@
 """
-Simple chaos scripts to create real failures for your agent to catch.
-Run these against your minikube cluster to generate demo-able incidents.
-No fancy chaos engineering tool needed - just deliberately bad manifests.
+Chaos scenarios: deploy deliberately broken workloads for the agent to catch.
 
-Usage: python app/chaos/break_stuff.py crashloop
-       python app/chaos/break_stuff.py oom
-       python app/chaos/break_stuff.py badimage
+Each scenario is a Deployment (not a bare Pod) so a restart remediation
+actually gets the pod recreated by its ReplicaSet.
+
+Usage:
+    python -m app.chaos.break_stuff crashloop|oom|badimage|all
+    python -m app.chaos.break_stuff cleanup
 """
 
+from __future__ import annotations
+
+import argparse
+import shutil
 import subprocess
 import sys
 
+NAMESPACE = "triton-chaos"
+LABEL = "app.kubernetes.io/part-of=triton-chaos"
+
+
+def _deployment(name: str, container: str) -> str:
+    return f"""
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {name}
+  namespace: {NAMESPACE}
+  labels: {{app.kubernetes.io/part-of: triton-chaos}}
+spec:
+  replicas: 1
+  selector: {{matchLabels: {{app: {name}}}}}
+  template:
+    metadata:
+      labels: {{app: {name}, app.kubernetes.io/part-of: triton-chaos}}
+    spec:
+      containers:
+{container}
+"""
+
+
 SCENARIOS = {
-    "crashloop": """
-apiVersion: v1
-kind: Pod
-metadata:
-  name: chaos-crashloop
-spec:
-  containers:
-  - name: crasher
-    image: busybox
-    command: ["sh", "-c", "echo 'simulated failure' && exit 1"]
-""",
-    "oom": """
-apiVersion: v1
-kind: Pod
-metadata:
-  name: chaos-oom
-spec:
-  containers:
-  - name: memory-hog
-    image: polinux/stress
-    command: ["stress"]
-    args: ["--vm", "1", "--vm-bytes", "300M", "--vm-hang", "1"]
-    resources:
-      limits:
-        memory: "50Mi"
-""",
-    "badimage": """
-apiVersion: v1
-kind: Pod
-metadata:
-  name: chaos-badimage
-spec:
-  containers:
-  - name: nope
-    image: this-image-does-not-exist:latest
-""",
+    # Crashes ~20s after start: a restart "helps" briefly - tests the restart rate limit.
+    "crashloop": _deployment(
+        "chaos-crashloop",
+        """      - name: crasher
+        image: busybox:1.36
+        command: ["sh", "-c"]
+        args: ["echo starting worker; sleep 20; echo 'FATAL: lost connection to queue' >&2; exit 1"]""",
+    ),
+    # Allocates 300M with a 50Mi limit -> OOMKilled. Needs manual_intervention (raise the limit).
+    "oom": _deployment(
+        "chaos-oom",
+        """      - name: memory-hog
+        image: polinux/stress:1.0.4
+        command: ["stress"]
+        args: ["--vm", "1", "--vm-bytes", "300M", "--vm-hang", "1"]
+        resources:
+          limits: {memory: "50Mi"}""",
+    ),
+    # Image doesn't exist -> ImagePullBackOff. Needs manual_intervention (fix the tag).
+    "badimage": _deployment(
+        "chaos-badimage",
+        """      - name: nope
+        image: registry.invalid/this-image-does-not-exist:latest""",
+    ),
 }
 
 
-import subprocess
-import sys
-import json
-from datetime import datetime, timezone
-
-def inject_mock_incident(name: str):
-    try:
-        from app.db.models import SessionLocal, Incident, Diagnosis, init_db
-        init_db()
-        db = SessionLocal()
-        
-        mock_data = {
-            "crashloop": {
-                "pod_name": "chaos-crashloop",
-                "namespace": "default",
-                "issues": ["waiting_reason:CrashLoopBackOff", "high_restart_count:5"],
-                "diagnosis": "Root Cause: Container 'crasher' crashed repeatedly with exit code 1 ('simulated failure').\nEvidence: Log output shows process exited with status 1. Restart count is 5.\nRecommended Action: Fix exit error in container startup script.\nConfidence: 98%",
-                "trace": [
-                    {"tool": "get_pod_logs", "input": {"pod_name": "chaos-crashloop", "namespace": "default"}},
-                    {"tool": "get_pod_events", "input": {"pod_name": "chaos-crashloop", "namespace": "default"}},
-                    {"tool": "describe_pod", "input": {"pod_name": "chaos-crashloop", "namespace": "default"}}
-                ],
-                "proposed_action_type": "restart_pod",
-                "action_status": "executed",
-                "executed_at": datetime.now(timezone.utc)
-            },
-            "oom": {
-                "pod_name": "chaos-oom-hog",
-                "namespace": "default",
-                "issues": ["phase:Failed", "waiting_reason:OOMKilled"],
-                "diagnosis": "Root Cause: Container 'memory-hog' exceeded memory limit (50Mi) while attempting to allocate 300MB.\nEvidence: K8s event 'OOMKilled' emitted by node kernel, process terminated by SIGKILL.\nRecommended Action: Increase pod memory limit to 512Mi or optimize application memory pool.\nConfidence: 95%",
-                "trace": [
-                    {"tool": "get_pod_events", "input": {"pod_name": "chaos-oom-hog", "namespace": "default"}},
-                    {"tool": "describe_pod", "input": {"pod_name": "chaos-oom-hog", "namespace": "default"}}
-                ],
-                "proposed_action_type": "increase_memory_limit",
-                "action_status": "pending_approval",
-                "executed_at": None
-            },
-            "badimage": {
-                "pod_name": "chaos-badimage",
-                "namespace": "default",
-                "issues": ["waiting_reason:ImagePullBackOff", "phase:Pending"],
-                "diagnosis": "Root Cause: Container image 'this-image-does-not-exist:latest' could not be pulled from registry.\nEvidence: K8s event 'ErrImagePull' and 'ImagePullBackOff'. Container image not found.\nRecommended Action: Correct the image repository tag in deployment manifest.\nConfidence: 100%",
-                "trace": [
-                    {"tool": "get_pod_events", "input": {"pod_name": "chaos-badimage", "namespace": "default"}},
-                    {"tool": "describe_pod", "input": {"pod_name": "chaos-badimage", "namespace": "default"}}
-                ],
-                "proposed_action_type": "update_image_tag",
-                "action_status": "pending_approval",
-                "executed_at": None
-            }
-        }
-        
-        info = mock_data.get(name, mock_data["crashloop"])
-        incident = Incident(
-            pod_name=info["pod_name"],
-            namespace=info["namespace"],
-            issues=json.dumps(info["issues"])
-        )
-        db.add(incident)
-        db.flush()
-        incident_id = incident.id
-        
-        proposed_action_str = json.dumps({"action": info["proposed_action_type"], "target": info["pod_name"]})
-        diagnosis = Diagnosis(
-            incident_id=incident_id,
-            diagnosis_text=info["diagnosis"],
-            tool_trace=json.dumps(info["trace"]),
-            proposed_action=proposed_action_str,
-            proposed_action_type=info["proposed_action_type"],
-            proposed_target=info["pod_name"],
-            action_status=info["action_status"],
-            executed_at=info["executed_at"]
-        )
-        db.add(diagnosis)
-        db.commit()
-        db.close()
-        print(f"Injected simulated incident '{info['pod_name']}' into fleet_triage.db (Incident ID: {incident_id})")
-    except Exception as err:
-        print(f"Failed to inject mock incident: {err}")
+def _kubectl(*args: str, stdin: str | None = None) -> None:
+    if shutil.which("kubectl") is None:
+        sys.exit("kubectl not found on PATH - install it and point it at your cluster (e.g. `minikube start`).")
+    subprocess.run(["kubectl", *args], input=stdin, text=True, check=True)
 
 
-def apply_scenario(name: str):
-    manifest = SCENARIOS.get(name)
-    if not manifest:
-        print(f"Unknown scenario '{name}'. Options: {list(SCENARIOS.keys())}")
-        sys.exit(1)
+def apply(names: list[str]) -> None:
+    namespace = f"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {NAMESPACE}\n"
+    manifests = "---".join([namespace, *(SCENARIOS[n] for n in names)])
+    _kubectl("apply", "-f", "-", stdin=manifests)
+    print(f"Applied {', '.join(names)} in namespace '{NAMESPACE}'. Watch: kubectl get pods -n {NAMESPACE} -w")
 
-    try:
-        subprocess.run(["kubectl", "apply", "-f", "-"], input=manifest, text=True, check=True)
-        print(f"Applied chaos scenario: {name}")
-    except Exception as e:
-        print(f"Kubectl apply skipped ({e}). Generating simulated incident...")
-        inject_mock_incident(name)
+
+def cleanup() -> None:
+    _kubectl("delete", "namespace", NAMESPACE, "--ignore-not-found")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("scenario", choices=[*SCENARIOS, "all", "cleanup"])
+    args = parser.parse_args(argv)
+
+    if args.scenario == "cleanup":
+        cleanup()
+    elif args.scenario == "all":
+        apply(list(SCENARIOS))
+    else:
+        apply([args.scenario])
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python break_stuff.py [crashloop|oom|badimage]")
-        sys.exit(1)
-    apply_scenario(sys.argv[1])
+    main()

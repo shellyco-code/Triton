@@ -1,117 +1,58 @@
+"""
+Background watch loop: scan -> dedup -> triage -> (optionally) remediate.
+
+All blocking work (Kubernetes + LLM + DB) runs in a worker thread so the
+FastAPI event loop stays responsive.
+"""
+
+from __future__ import annotations
+
 import asyncio
-import os
-import json
 import logging
-from datetime import datetime, timedelta, timezone
+
 from fastapi.concurrency import run_in_threadpool
 
-from app.k8s.client import list_unhealthy_pods
-from app.agent.triage_agent import triage_pod
-from app.db.models import SessionLocal, Incident, Diagnosis
+from app import services
+from app.config import get_settings
+from app.k8s.client import ClusterUnavailableError, list_unhealthy_pods
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
 logger = logging.getLogger(__name__)
 
-async def poll_cluster():
-    """
-    Background loop that scans for unhealthy pods on an interval.
-    If a new unhealthy pod is found, it triggers the triage_pod agent workflow.
-    """
-    interval = int(os.getenv("POLL_INTERVAL_SECONDS", "30"))
-    # Cooldown before we re-triage the same pod (e.g. 10 minutes)
-    cooldown_minutes = int(os.getenv("TRIAGE_COOLDOWN_MINUTES", "10"))
-    
-    logger.info(f"Starting poller. Interval: {interval}s, Cooldown: {cooldown_minutes}m")
-    
+
+def poll_once() -> int:
+    """One scan + triage pass. Returns the number of pods triaged."""
+    settings = get_settings()
+    try:
+        pods = list_unhealthy_pods(settings.watch_namespace, settings.pending_grace_seconds)
+    except ClusterUnavailableError as exc:
+        logger.warning("Cluster unavailable, skipping scan: %s", exc)
+        return 0
+
+    triaged = 0
+    for pod in pods:
+        if services.recently_triaged(pod["namespace"], pod["workload"], settings.triage_cooldown_minutes):
+            logger.debug("Skipping %s/%s (cooldown)", pod["namespace"], pod["name"])
+            continue
+        try:
+            services.triage_and_record(pod, auto_remediate=settings.auto_remediate)
+            triaged += 1
+        except Exception:  # noqa: BLE001 - one bad pod must not stop the loop
+            logger.exception("Failed to triage %s/%s", pod["namespace"], pod["name"])
+    return triaged
+
+
+async def poll_cluster() -> None:
+    settings = get_settings()
+    logger.info(
+        "Poller started (interval=%ss, cooldown=%sm, namespace=%s, auto_remediate=%s)",
+        settings.poll_interval_seconds,
+        settings.triage_cooldown_minutes,
+        settings.watch_namespace or "*",
+        settings.auto_remediate,
+    )
     while True:
         try:
-            logger.info("Scanning for unhealthy pods...")
-            
-            # Since list_unhealthy_pods does HTTP requests synchronously to k8s, 
-            # we run it in a threadpool to not block the asyncio event loop.
-            watch_namespace = os.getenv("WATCH_NAMESPACE")
-            unhealthy_pods = await run_in_threadpool(list_unhealthy_pods, watch_namespace)
-            
-            if not unhealthy_pods:
-                logger.info("Cluster looks healthy, no unhealthy pods found.")
-            else:
-                db = SessionLocal()
-                try:
-                    cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
-                    
-                    for pod in unhealthy_pods:
-                        pod_name = pod["name"]
-                        
-                        # Check if we recently triaged this pod
-                        recent_incident = db.query(Incident).filter(
-                            Incident.pod_name == pod_name,
-                            Incident.detected_at >= cutoff_time
-                        ).first()
-                        
-                        if recent_incident:
-                            logger.info(f"Skipping '{pod_name}' (recently triaged at {recent_incident.detected_at})")
-                            continue
-                            
-                        logger.info(f"New unhealthy pod detected: '{pod_name}'. Triggering triage agent...")
-                        
-                        try:
-                            # Run the triage agent loop using threadpool for non-blocking execution
-                            result = await run_in_threadpool(triage_pod, pod)
-                            
-                            # Store incident and diagnosis
-                            incident = Incident(
-                                pod_name=pod_name,
-                                namespace=pod["namespace"],
-                                issues=json.dumps(pod["issues"]),
-                            )
-                            db.add(incident)
-                            db.commit()
-                            db.refresh(incident)
-
-                            remediation_proposal = result.get("remediation_proposal")
-                            action_status = result.get("action_status", "pending_approval")
-                            
-                            proposed_action_type = None
-                            proposed_target = None
-                            proposed_action_str = None
-                            
-                            if remediation_proposal:
-                                proposed_action_str = json.dumps(remediation_proposal)
-                                proposed_action_type = remediation_proposal.get("action")
-                                proposed_target = remediation_proposal.get("target")
-
-                            diagnosis = Diagnosis(
-                                incident_id=incident.id,
-                                diagnosis_text=result["diagnosis"],
-                                tool_trace=json.dumps(result["tool_trace"]),
-                                proposed_action=proposed_action_str,
-                                proposed_action_type=proposed_action_type,
-                                proposed_target=proposed_target,
-                                action_status=action_status,
-                            )
-                            db.add(diagnosis)
-                            db.commit()
-                            db.refresh(diagnosis)
-                            
-                            diagnosis_id = diagnosis.id
-                            
-                            # Execute the remediation if proposed (rate limits apply inside)
-                            from app.agent.remediation_executor import execute_remediation
-                            execute_remediation(diagnosis_id)
-                            
-                            logger.info(f"Triage complete for '{pod_name}'. Diagnosis saved (Incident ID: {incident.id}).")
-                            logger.info(f"Diagnosis Snippet: {result['diagnosis'][:150]}...")
-                        except Exception as triage_err:
-                            logger.error(f"Failed to triage pod '{pod_name}': {triage_err}", exc_info=True)
-                            db.rollback()
-                finally:
-                    db.close()
-                    
-        except Exception as e:
-            logger.error(f"Error in polling loop: {e}", exc_info=True)
-            
-        await asyncio.sleep(interval)
+            await run_in_threadpool(poll_once)
+        except Exception:  # noqa: BLE001
+            logger.exception("Unexpected error in polling loop")
+        await asyncio.sleep(settings.poll_interval_seconds)

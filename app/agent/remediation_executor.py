@@ -1,105 +1,129 @@
-import json
+"""
+Remediation executor: the only code path that mutates the cluster.
+
+The LLM's proposal is treated as untrusted. Every safety rail below is
+deterministic code, evaluated in order, and each skip is recorded with a
+human-readable reason in `Diagnosis.status_detail`.
+"""
+
+from __future__ import annotations
+
 import logging
-from datetime import datetime, timedelta, timezone
-from app.db.models import Diagnosis, SessionLocal
-from app.k8s.client import delete_pod
+from dataclasses import dataclass
+from datetime import timedelta
+
+from kubernetes.client.exceptions import ApiException
+from sqlalchemy import select
+
+from app.config import get_settings
+from app.db.models import ActionStatus, Diagnosis, Incident, SessionLocal, utcnow
+from app.k8s import client as k8s
 
 logger = logging.getLogger(__name__)
 
-MAX_RESTARTS_PER_30_MIN = 2
+SUPPORTED_ACTIONS = {"restart_pod"}
 
-def execute_remediation(diagnosis_id: int):
+
+class DiagnosisNotFoundError(LookupError):
+    pass
+
+
+@dataclass(frozen=True)
+class RemediationOutcome:
+    diagnosis_id: int
+    status: str
+    detail: str
+    changed: bool  # False when nothing was attempted (already handled / not actionable)
+
+
+def _set(diag: Diagnosis, status: ActionStatus, detail: str) -> RemediationOutcome:
+    diag.action_status = status.value
+    diag.status_detail = detail
+    log = logger.info if status == ActionStatus.EXECUTED else logger.warning
+    log("Diagnosis %s -> %s: %s", diag.id, status.value, detail)
+    return RemediationOutcome(diag.id, status.value, detail, changed=True)
+
+
+def _recent_restarts(db, namespace: str, workload: str, window_minutes: int) -> int:
+    cutoff = utcnow() - timedelta(minutes=window_minutes)
+    stmt = (
+        select(Diagnosis.id)
+        .join(Incident)
+        .where(
+            Incident.namespace == namespace,
+            Incident.workload == workload,
+            Diagnosis.action_status == ActionStatus.EXECUTED.value,
+            Diagnosis.executed_at >= cutoff,
+        )
+    )
+    return len(db.execute(stmt).all())
+
+
+def execute_remediation(diagnosis_id: int, *, approved_by_human: bool = False) -> RemediationOutcome:
     """
-    Evaluates and potentially executes a remediation proposal safely.
-    Checks the rate limit before executing automated actions.
+    Evaluate and (if every safety rail passes) execute a remediation proposal.
+    Automatic callers pass approved_by_human=False; this only acts when
+    AUTO_REMEDIATE is enabled.
     """
-    db = SessionLocal()
-    try:
-        diag = db.query(Diagnosis).filter(Diagnosis.id == diagnosis_id).first()
-        if not diag:
-            return
-            
-        if diag.action_status == "parse_error":
-            logger.warning(f"Diagnosis {diagnosis_id} had a parse_error. Skipping remediation.")
-            return
+    settings = get_settings()
+    with SessionLocal() as db:
+        diag = db.get(Diagnosis, diagnosis_id)
+        if diag is None:
+            raise DiagnosisNotFoundError(diagnosis_id)
 
-        if diag.action_status in ("executed", "skipped_by_safety"):
-            logger.info(f"Diagnosis {diagnosis_id} has already been processed (status: {diag.action_status}).")
-            return
+        if diag.action_status != ActionStatus.PENDING_APPROVAL.value:
+            return RemediationOutcome(
+                diag.id, diag.action_status, f"not actionable in status '{diag.action_status}'", changed=False
+            )
+        if not approved_by_human and not settings.auto_remediate:
+            return RemediationOutcome(diag.id, diag.action_status, "awaiting human approval", changed=False)
 
-        action = diag.proposed_action_type
-        target = diag.proposed_target
-
-        if not action or not target:
-            # Fallback to json parsing if columns are empty (e.g. older entries before migration)
-            if diag.proposed_action:
-                try:
-                    proposal = json.loads(diag.proposed_action)
-                    action = proposal.get("action")
-                    target = proposal.get("target")
-                except json.JSONDecodeError:
-                    logger.error(f"Invalid JSON in proposed_action for Diagnosis {diagnosis_id}")
-                    diag.action_status = "failed"
-                    db.commit()
-                    return
-            else:
-                diag.action_status = "failed"
-                db.commit()
-                logger.error(f"Diagnosis {diagnosis_id}: 'action' or 'target' missing from proposal.")
-                return
-
-        # We only automate restart_pod for the MVP
-        if action != "restart_pod":
-            diag.action_status = "pending_approval"
-            db.commit()
-            logger.info(f"Diagnosis {diagnosis_id}: Action '{action}' requires manual approval.")
-            return
-
-        if not target:
-            diag.action_status = "failed"
-            db.commit()
-            logger.error(f"Diagnosis {diagnosis_id}: 'target' missing from proposal.")
-            return
-
-        # --- SAFETY CHECK: Rate Limiter ---
-        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=30)
-        
-        # Count how many times this specific target was restarted recently
-        recent_restarts = db.query(Diagnosis).filter(
-            Diagnosis.id != diagnosis_id,
-            Diagnosis.created_at >= cutoff_time,
-            Diagnosis.action_status == "executed",
-            Diagnosis.proposed_target == target,
-            Diagnosis.proposed_action_type == "restart_pod"
-        ).count()
-
-        if recent_restarts >= MAX_RESTARTS_PER_30_MIN:
-            diag.action_status = "skipped_by_safety"
-            db.commit()
-            logger.warning(f"Safety Triggered: Pod '{target}' has been restarted {recent_restarts} times in 30m. Skipping.")
-            return
-
-        # --- SAFETY CHECK: System Namespaces ---
-        target_namespace = diag.incident.namespace if diag.incident else "default"
-        SYSTEM_NAMESPACES = {"kube-system", "kube-public", "kube-node-lease"}
-        if target_namespace in SYSTEM_NAMESPACES:
-            diag.action_status = "skipped_by_safety"
-            db.commit()
-            logger.warning(f"Safety Triggered: Pod '{target}' is in system namespace '{target_namespace}'. Skipping.")
-            return
-
-        # --- EXECUTION ---
-        logger.info(f"Executing restart_pod for '{target}' in namespace '{target_namespace}'...")
-        success = delete_pod(pod_name=target, namespace=target_namespace)
-
-        if success:
-            diag.action_status = "executed"
-            diag.executed_at = datetime.now(timezone.utc)
-            logger.info(f"Successfully restarted pod '{target}'.")
-        else:
-            diag.action_status = "failed"
-            logger.error(f"Failed to execute restart_pod for '{target}'.")
-
+        incident = diag.incident
+        outcome = _evaluate_and_execute(db, diag, incident, settings)
         db.commit()
-    finally:
-        db.close()
+        return outcome
+
+
+def _evaluate_and_execute(db, diag: Diagnosis, incident: Incident, settings) -> RemediationOutcome:
+    action, target, namespace = diag.proposed_action_type, diag.proposed_target, incident.namespace
+
+    if action not in SUPPORTED_ACTIONS:
+        return _set(diag, ActionStatus.MANUAL_INTERVENTION, f"action '{action}' cannot be automated")
+
+    # The model may only act on the pod it was asked to investigate.
+    if target != incident.pod_name:
+        return _set(
+            diag, ActionStatus.SKIPPED_BY_SAFETY, f"proposed target '{target}' != incident pod '{incident.pod_name}'"
+        )
+
+    if namespace in settings.protected_namespaces:
+        return _set(diag, ActionStatus.SKIPPED_BY_SAFETY, f"namespace '{namespace}' is protected")
+
+    try:
+        live_workload = k8s.get_pod_workload(target, namespace)
+    except ApiException as exc:
+        return _set(diag, ActionStatus.FAILED, f"could not read pod: {exc.status} {exc.reason}")
+    if live_workload is None:
+        return _set(diag, ActionStatus.SKIPPED_BY_SAFETY, "pod no longer exists")
+    if live_workload.split("/", 1)[0] not in k8s.RECREATING_OWNERS:
+        return _set(
+            diag,
+            ActionStatus.SKIPPED_BY_SAFETY,
+            f"pod is not managed by a controller ({live_workload}); delete would not recreate it",
+        )
+
+    recent = _recent_restarts(db, namespace, live_workload, settings.restart_window_minutes)
+    if recent >= settings.max_restarts_per_window:
+        return _set(
+            diag,
+            ActionStatus.SKIPPED_BY_SAFETY,
+            f"{live_workload} already restarted {recent}x in the last {settings.restart_window_minutes}m",
+        )
+
+    try:
+        k8s.delete_pod(target, namespace)
+    except ApiException as exc:
+        return _set(diag, ActionStatus.FAILED, f"delete failed: {exc.status} {exc.reason}")
+
+    diag.executed_at = utcnow()
+    return _set(diag, ActionStatus.EXECUTED, f"deleted pod {namespace}/{target}; {live_workload} will recreate it")
