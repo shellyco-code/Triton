@@ -2,503 +2,455 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Triton Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Triton · Kubernetes triage</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 3v26M8 8v7a8 8 0 0 0 16 0V8' fill='none' stroke='%23f59e0b' stroke-width='3' stroke-linecap='round'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
---bg-main:#0b0f14;
---bg-card:#11161d;
---bg-card-hover:#151b23;
---bg-panel:#0d1117;
---text-primary:#d6dde6;
---text-secondary:#7d8590;
---text-muted:#5f6874;
---border:#2a3038;
---border-strong:#3a424d;
---accent:#f59e0b;
---success:#f59e0b;
---pending:#c76a37;
---accent-soft:rgba(245,158,11,.1);
---accent-border:rgba(245,158,11,.32);
---pending-soft:rgba(199,106,55,.11);
---mono:'JetBrains Mono',monospace;
---sans:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --bg:#f6f7f9; --surface:#ffffff; --surface-2:#f1f3f6; --border:#e3e6eb; --border-strong:#cfd4dc;
+  --text:#0f172a; --text-2:#475569; --text-3:#8391a5;
+  --accent:#d97706; --accent-soft:rgba(217,119,6,.10);
+  --ok:#059669; --ok-soft:rgba(5,150,105,.10);
+  --warn:#d97706; --warn-soft:rgba(217,119,6,.11);
+  --bad:#dc2626; --bad-soft:rgba(220,38,38,.09);
+  --info:#2563eb; --info-soft:rgba(37,99,235,.09);
+  --muted-soft:rgba(100,116,139,.12);
+  --shadow:0 1px 2px rgba(15,23,42,.05),0 1px 3px rgba(15,23,42,.04);
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  color-scheme:light;
 }
-*{
-box-sizing:border-box;
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0a0d12; --surface:#10151c; --surface-2:#151b24; --border:#222a35; --border-strong:#2f3946;
+    --text:#e6ebf2; --text-2:#a3afbf; --text-3:#6b7889;
+    --accent:#f59e0b; --accent-soft:rgba(245,158,11,.12);
+    --ok:#34d399; --ok-soft:rgba(52,211,153,.12);
+    --warn:#f59e0b; --warn-soft:rgba(245,158,11,.13);
+    --bad:#f87171; --bad-soft:rgba(248,113,113,.12);
+    --info:#60a5fa; --info-soft:rgba(96,165,250,.12);
+    --muted-soft:rgba(148,163,184,.12);
+    --shadow:none; color-scheme:dark;
+  }
 }
-body{
-background:var(--bg-main);
-color:var(--text-primary);
-font-family:var(--sans);
-margin:0;
-padding:1.5rem;
-line-height:1.45;
+:root[data-theme="dark"]{
+  --bg:#0a0d12; --surface:#10151c; --surface-2:#151b24; --border:#222a35; --border-strong:#2f3946;
+  --text:#e6ebf2; --text-2:#a3afbf; --text-3:#6b7889;
+  --accent:#f59e0b; --accent-soft:rgba(245,158,11,.12);
+  --ok:#34d399; --ok-soft:rgba(52,211,153,.12);
+  --warn:#f59e0b; --warn-soft:rgba(245,158,11,.13);
+  --bad:#f87171; --bad-soft:rgba(248,113,113,.12);
+  --info:#60a5fa; --info-soft:rgba(96,165,250,.12);
+  --muted-soft:rgba(148,163,184,.12);
+  --shadow:none; color-scheme:dark;
 }
-.container{
-max-width:1000px;
-margin:0 auto;
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px 48px}
+
+/* Top bar */
+.topbar{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--border)}
+.topbar .wrap{display:flex;align-items:center;gap:16px;padding-top:12px;padding-bottom:12px;flex-wrap:wrap;position:relative}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto}
+.brand svg{width:26px;height:26px}
+.brand h1{font-size:17px;font-weight:700;letter-spacing:-.02em;margin:0}
+.brand .ver{font:500 11px var(--mono);color:var(--text-3)}
+.pills{display:flex;gap:8px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font:500 12px var(--sans);color:var(--text-2);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3);flex:none}
+.pill.ok .dot{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.pill.warn .dot{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
+.pill.bad .dot{background:var(--bad);box-shadow:0 0 0 3px var(--bad-soft)}
+.pill.live .dot{animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.tools{display:flex;gap:6px}
+.icon-btn{width:32px;height:32px;display:grid;place-items:center;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer;color:var(--text-2)}
+.icon-btn:hover{border-color:var(--border-strong);color:var(--text)}
+.icon-btn svg{width:16px;height:16px}
+.icon-btn.active{color:var(--accent);border-color:var(--accent)}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:20px 0}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.stat .label{font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px}
+.stat .label i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.stat .value{font:600 26px/1.2 var(--sans);letter-spacing:-.02em;margin-top:4px;font-variant-numeric:tabular-nums}
+.stat .sub{font-size:12px;color:var(--text-3);margin-top:2px}
+
+/* Toolbar */
+.toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
+.tabs{display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:3px;overflow-x:auto;max-width:100%}
+.tab{border:0;background:none;padding:6px 12px;border-radius:7px;font-weight:500;font-size:13px;color:var(--text-2);cursor:pointer;white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab[aria-selected="true"]{background:var(--surface);color:var(--text);box-shadow:var(--shadow);outline:1px solid var(--border)}
+.tab .n{font:500 11px var(--mono);color:var(--text-3);margin-left:5px}
+.search{position:relative;flex:0 1 280px}
+.search input{width:100%;padding:7px 10px 7px 32px;border-radius:9px;border:1px solid var(--border);background:var(--surface);outline:none}
+.search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--text-3)}
+
+/* Incidents */
+.list{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;position:relative}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--stripe,var(--border-strong))}
+.card:hover{border-color:var(--border-strong)}
+.card-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;padding:14px 16px 14px 18px;cursor:pointer;width:100%;border:0;background:none;text-align:left}
+.card-head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:12px}
+.title-row{display:flex;align-items:baseline;gap:8px;min-width:0}
+.pod{font:600 14px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ns{font:400 12px var(--mono);color:var(--text-3);white-space:nowrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.chip{font:500 11px var(--mono);padding:2px 7px;border-radius:6px;background:var(--muted-soft);color:var(--text-2)}
+.preview{color:var(--text-2);font-size:13px;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.right{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.time{font:400 12px var(--mono);color:var(--text-3);white-space:nowrap}
+.badge{display:inline-flex;align-items:center;gap:6px;font:600 11px var(--sans);padding:3px 9px;border-radius:999px;white-space:nowrap;letter-spacing:.01em}
+.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.s-executed{--stripe:var(--ok)} .b-executed{color:var(--ok);background:var(--ok-soft)}
+.s-pending_approval{--stripe:var(--warn)} .b-pending_approval{color:var(--warn);background:var(--warn-soft)}
+.s-skipped_by_safety,.s-failed{--stripe:var(--bad)} .b-skipped_by_safety,.b-failed{color:var(--bad);background:var(--bad-soft)}
+.s-manual_intervention{--stripe:var(--info)} .b-manual_intervention{color:var(--info);background:var(--info-soft)}
+.s-parse_error,.s-triaging{--stripe:var(--text-3)} .b-parse_error,.b-triaging{color:var(--text-2);background:var(--muted-soft)}
+
+.body{display:none;border-top:1px solid var(--border);background:var(--surface-2);padding:18px}
+.card.open .body{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:18px}
+.section h3{font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin:0 0 8px}
+.section + .section{margin-top:16px}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.diag{white-space:pre-wrap;font-size:13.5px;line-height:1.6}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px;margin:0}
+.kv dt{color:var(--text-3)} .kv dd{margin:0;font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.action{font:600 13px var(--mono);overflow-wrap:anywhere}
+.action .arrow{color:var(--text-3);font-weight:400;margin:0 6px}
+.reason{color:var(--text-2);font-size:13px;margin-top:4px}
+.outcome{margin-top:10px;padding:8px 10px;border-radius:8px;font-size:12.5px;background:var(--muted-soft);color:var(--text-2)}
+.outcome.executed{background:var(--ok-soft);color:var(--ok)}
+.outcome.skipped_by_safety,.outcome.failed{background:var(--bad-soft);color:var(--bad)}
+.btn-row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.btn{border:0;border-radius:8px;padding:8px 14px;font-weight:600;font-size:13px;cursor:pointer;background:var(--accent);color:#111;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{filter:brightness(1.05)} .btn:disabled{opacity:.55;cursor:progress}
+.hint{font-size:12px;color:var(--text-3)}
+
+.timeline{list-style:none;margin:0;padding:0;position:relative}
+.timeline li{position:relative;padding:0 0 12px 28px}
+.timeline li:last-child{padding-bottom:0}
+.timeline li::before{content:"";position:absolute;left:9px;top:20px;bottom:-2px;width:1px;background:var(--border-strong)}
+.timeline li:last-child::before{display:none}
+.step{position:absolute;left:0;top:1px;width:19px;height:19px;border-radius:50%;display:grid;place-items:center;font:600 10px var(--mono);background:var(--surface);border:1px solid var(--border-strong);color:var(--text-2)}
+.step.err{border-color:var(--bad);color:var(--bad)}
+.tool{font:600 12.5px var(--mono);color:var(--accent)}
+.tool.err{color:var(--bad)}
+.tool-meta{font:400 11.5px var(--mono);color:var(--text-3);margin-left:6px}
+.tool-err{font:400 11.5px var(--mono);color:var(--bad);margin-top:2px;overflow-wrap:anywhere}
+
+.empty{text-align:center;padding:56px 20px;background:var(--surface);border:1px dashed var(--border-strong);border-radius:12px;color:var(--text-2)}
+.empty h2{font-size:15px;margin:10px 0 4px;color:var(--text)}
+.empty code{font:500 12px var(--mono);background:var(--surface-2);border:1px solid var(--border);padding:6px 10px;border-radius:8px;display:inline-block;margin-top:10px}
+.skeleton{height:84px;border-radius:12px;background:linear-gradient(90deg,var(--surface) 0,var(--surface-2) 50%,var(--surface) 100%);background-size:200% 100%;animation:shimmer 1.2s infinite;border:1px solid var(--border)}
+@keyframes shimmer{to{background-position:-200% 0}}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;background:var(--text);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:13px;font-weight:500;transition:.2s;max-width:min(560px,calc(100vw - 32px));box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.toast.show{opacity:1;transform:translateX(-50%)}
+.toast.bad{background:var(--bad);color:#fff}
+
+.popover{position:absolute;right:20px;top:56px;width:300px;max-width:calc(100vw - 32px);background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:0 12px 32px rgba(0,0,0,.16);display:none}
+.popover.show{display:block}
+.popover label{font-size:12px;color:var(--text-2);display:block;margin-bottom:6px}
+.popover input{width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);font-family:var(--mono);font-size:12px}
+.popover .btn-row{justify-content:flex-end}
+
+@media (max-width:860px){
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stats .stat:last-child{grid-column:span 2}
+  .card.open .body{grid-template-columns:1fr}
 }
-header{
-display:flex;
-justify-content:space-between;
-align-items:center;
-margin-bottom:1.25rem;
-padding-bottom:.75rem;
-border-bottom:1px solid var(--border);
+@media (max-width:560px){
+  .wrap{padding:0 16px 40px}
+  .pills{order:3;width:100%}
+  .search{flex:1 1 100%}
+  .card-head{grid-template-columns:1fr}
+  .right{flex-direction:row;align-items:center;justify-content:space-between}
 }
-h1{
-font-size:1.45rem;
-font-weight:600;
-margin:0;
-color:#f4f7fb;
-letter-spacing:-.04em;
-}
-.status-badge{
-display:flex;
-align-items:center;
-gap:.45rem;
-font-family:var(--mono);
-font-size:.72rem;
-font-weight:500;
-letter-spacing:.02em;
-text-transform:uppercase;
-color:var(--accent);
-background:var(--accent-soft);
-padding:.3rem .5rem;
-border-radius:4px;
-border:1px solid var(--accent-border);
-}
-.dot{
-width:7px;
-height:7px;
-border-radius:50%;
-background:var(--accent);
-box-shadow:0 0 10px rgba(245,158,11,.7);
-animation:pulse 1.8s infinite;
-}
-@keyframes pulse{
-0%{opacity:1;transform:scale(1)}
-50%{opacity:.48;transform:scale(1.18)}
-100%{opacity:1;transform:scale(1)}
-}
-#incidents-container{
-display:flex;
-flex-direction:column;
-gap:.55rem;
-}
-.incident-card{
-background:var(--bg-card);
-border:1px solid var(--border);
-border-left:4px solid transparent;
-border-radius:4px;
-overflow:hidden;
-transition:background-color .16s ease,border-color .16s ease;
-box-shadow:none;
-}
-.incident-card.status-resolved{
-border-left-color:var(--success);
-}
-.incident-card.status-pending{
-border-left-color:var(--pending);
-}
-.incident-card:hover{
-background:var(--bg-card-hover);
-border-color:var(--border-strong);
-}
-.incident-card.status-resolved:hover{
-border-left-color:var(--success);
-}
-.incident-card.status-pending:hover{
-border-left-color:var(--pending);
-}
-.incident-header{
-padding:.75rem .875rem;
-cursor:pointer;
-display:grid;
-grid-template-columns:minmax(0,1fr) auto;
-gap:.75rem;
-align-items:center;
-}
-.incident-title{
-min-width:0;
-display:flex;
-flex-direction:column;
-gap:.24rem;
-}
-.pod-name{
-font-family:var(--mono);
-font-size:.95rem;
-font-weight:700;
-line-height:1.2;
-color:#f3f4f6;
-letter-spacing:-.02em;
-white-space:nowrap;
-overflow:hidden;
-text-overflow:ellipsis;
-}
-.incident-meta{
-display:flex;
-align-items:center;
-gap:.5rem;
-min-width:0;
-}
-.detected-time{
-font-family:var(--mono);
-font-size:.72rem;
-font-weight:400;
-color:var(--text-secondary);
-white-space:nowrap;
-}
-.status-label{
-font-family:var(--mono);
-font-size:.68rem;
-font-weight:500;
-line-height:1;
-color:var(--text-muted);
-text-transform:uppercase;
-letter-spacing:.04em;
-}
-.diagnosis-preview{
-font-family:var(--mono);
-font-size:.78rem;
-font-weight:400;
-line-height:1.35;
-color:var(--text-secondary);
-white-space:nowrap;
-overflow:hidden;
-text-overflow:ellipsis;
-}
-.expand-icon{
-font-family:var(--mono);
-font-size:.8rem;
-color:var(--text-secondary);
-transition:transform .16s ease,color .16s ease;
-line-height:1;
-}
-.incident-card:hover .expand-icon{
-color:var(--accent);
-}
-.incident-card.expanded .expand-icon{
-transform:rotate(180deg);
-}
-.incident-body{
-display:none;
-padding:.875rem;
-border-top:1px solid var(--border);
-background:var(--bg-panel);
-}
-.incident-card.expanded .incident-body{
-display:block;
-animation:fadeIn .16s ease;
-}
-@keyframes fadeIn{
-from{opacity:0;transform:translateY(-4px)}
-to{opacity:1;transform:translateY(0)}
-}
-h3{
-font-size:.78rem;
-font-weight:600;
-letter-spacing:.04em;
-text-transform:uppercase;
-margin:0 0 .45rem;
-color:#f4f7fb;
-}
-pre{
-background:var(--bg-card);
-border:1px solid var(--border);
-border-radius:4px;
-padding:.75rem;
-overflow-x:auto;
-font-family:var(--mono);
-font-size:.82rem;
-line-height:1.5;
-color:var(--text-primary);
-white-space:pre-wrap;
-margin:0 0 .875rem;
-}
-.trace-box{
-background:var(--bg-card);
-border:1px solid var(--border);
-border-radius:4px;
-padding:.65rem .75rem;
-}
-.trace-item{
-font-family:var(--mono);
-font-size:.78rem;
-line-height:1.45;
-padding:.42rem 0;
-border-bottom:1px dashed var(--border);
-}
-.trace-item:first-child{
-padding-top:0;
-}
-.trace-item:last-child{
-padding-bottom:0;
-border-bottom:none;
-}
-.tool-name{
-color:var(--accent);
-font-weight:700;
-}
-.tool-args{
-color:var(--text-secondary);
-}
-.empty-state{
-text-align:center;
-padding:2.5rem;
-font-family:var(--mono);
-font-size:.82rem;
-color:var(--text-secondary);
-}
-.remediation-badge {
-font-family:var(--mono);
-font-size:0.7rem;
-font-weight:600;
-padding:0.2rem 0.4rem;
-border-radius:4px;
-border:1px solid;
-white-space:nowrap;
-display:inline-block;
-margin-left:0.5rem;
-vertical-align:middle;
-}
-.badge-executed {
-color:#10b981;
-background:rgba(16,185,129,0.1);
-border-color:rgba(16,185,129,0.3);
-}
-.badge-pending {
-color:var(--accent);
-background:var(--accent-soft);
-border-color:var(--accent-border);
-}
-.badge-skipped {
-color:#ef4444;
-background:rgba(239,68,68,0.1);
-border-color:rgba(239,68,68,0.3);
-}
-.badge-error {
-color:var(--text-secondary);
-background:rgba(125,133,144,0.1);
-border-color:rgba(125,133,144,0.3);
-}
-.badge-manual {
-color:#60a5fa;
-background:rgba(96,165,250,0.1);
-border-color:rgba(96,165,250,0.3);
-}
-.meta-row{
-font-family:var(--mono);
-font-size:.75rem;
-color:var(--text-secondary);
-margin:0 0 .875rem;
-display:flex;
-flex-wrap:wrap;
-gap:.35rem 1.25rem;
-}
-.meta-row b{color:var(--text-primary);font-weight:500;}
-.tool-err{color:#ef4444;}
-.actions{display:flex;align-items:center;gap:.75rem;margin-top:.875rem;flex-wrap:wrap;}
-.btn{
-background:var(--accent);
-color:#000;
-border:none;
-padding:.45rem .9rem;
-border-radius:4px;
-font-size:.78rem;
-font-weight:600;
-cursor:pointer;
-}
-.btn:disabled{opacity:.5;cursor:wait;}
-.token-input{
-background:var(--bg-card);
-border:1px solid var(--border);
-color:var(--text-primary);
-padding:.4rem .6rem;
-border-radius:4px;
-font-family:var(--mono);
-font-size:.75rem;
-width:220px;
-}
-.banner{
-font-family:var(--mono);
-font-size:.78rem;
-padding:.6rem .8rem;
-border-radius:4px;
-margin-bottom:.75rem;
-display:none;
-border:1px solid rgba(239,68,68,.3);
-background:rgba(239,68,68,.08);
-color:#fca5a5;
-}
-.banner.show{display:block;}
-.ns{color:var(--text-muted);font-weight:400;}
-@media (max-width:640px){
-body{padding:1rem;}
-header{flex-direction:column;align-items:flex-start;gap:.75rem;}
-.token-input{width:100%;}
-}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<div class="container">
-<header>
-<div style="display:flex;align-items:center;gap:1rem;">
-<h1>Triton</h1>
-<div class="status-badge"><div class="dot"></div>Live</div>
-</div>
-<div style="display:flex;align-items:center;gap:.5rem;">
-<input type="password" id="token-input" class="token-input" placeholder="API token (if server requires one)" autocomplete="off">
-<button class="btn" onclick="setToken()">Set</button>
-</div>
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3v26M8 8v7a8 8 0 0 0 16 0V8" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/></svg>
+      <h1>Triton</h1><span class="ver" id="version"></span>
+    </div>
+    <div class="pills" id="pills"><span class="pill"><span class="dot"></span>Connecting…</span></div>
+    <div class="tools">
+      <button class="icon-btn" id="token-btn" title="API token" aria-label="API token">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8M17 6l3 3M14 9l2 2"/></svg>
+      </button>
+      <button class="icon-btn" id="theme-btn" title="Toggle theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+    <div class="popover" id="token-pop">
+      <label for="token-input">API token (only if the server sets TRITON_API_TOKEN)</label>
+      <input type="password" id="token-input" autocomplete="off" placeholder="paste token">
+      <div class="btn-row"><button class="btn" id="token-save">Save for this tab</button></div>
+    </div>
+  </div>
 </header>
-<div id="banner" class="banner"></div>
-<div id="incidents-container">
-<div class="empty-state">Loading incidents...</div>
-</div>
-</div>
+
+<main class="wrap">
+  <section class="stats" id="stats" aria-label="Summary"></section>
+  <div class="toolbar">
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <label class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="Filter by pod, namespace, issue…" aria-label="Filter incidents">
+    </label>
+  </div>
+  <div class="list" id="list"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
 <script>
-const expandedIncidents = new Set();
-let apiToken = '';
+const STATUS_LABEL = {
+  pending_approval: 'Awaiting approval', executed: 'Restarted', manual_intervention: 'Needs a human',
+  skipped_by_safety: 'Blocked by safety', failed: 'Remediation failed', parse_error: 'Parse error', triaging: 'Triaging…',
+};
+const TABS = [
+  ['all', 'All'], ['pending_approval', 'Awaiting approval'], ['manual_intervention', 'Needs human'],
+  ['executed', 'Restarted'], ['blocked', 'Blocked / failed'],
+];
 
-function setToken() {
-  const input = document.getElementById('token-input');
-  apiToken = input.value.trim();
-  input.value = '';
-  input.placeholder = apiToken ? 'Token set for this tab' : 'API token (if server requires one)';
+const state = {incidents: [], status: null, stats: null, tab: 'all', q: '', open: new Set(), token: '', loaded: false};
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const statusOf = inc => inc.action_status || 'triaging';
+
+function ago(iso) {
+  if (!iso) return '';
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
+  if (s < 10) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+const fmtMs = ms => ms == null ? '–' : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+const fmtNum = n => n == null ? '–' : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
+let toastTimer;
+function toast(msg, bad = false) {
+  const t = $('toast'); t.textContent = msg; t.className = `toast show${bad ? ' bad' : ''}`;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = 'toast'; }, 4000);
 }
 
-function showBanner(msg) {
-  const b = document.getElementById('banner');
-  b.textContent = msg || '';
-  b.classList.toggle('show', !!msg);
+/* ---------- status bar ---------- */
+function renderPills() {
+  const s = state.status;
+  if (!s) { $('pills').innerHTML = '<span class="pill bad"><span class="dot"></span>API unreachable</span>'; return; }
+  $('version').textContent = `v${s.version}`;
+  const pills = [];
+  pills.push(s.k8s_connected
+    ? '<span class="pill ok" title="Kubernetes API reachable"><span class="dot"></span>Cluster connected</span>'
+    : '<span class="pill bad" title="No kubeconfig or in-cluster config found"><span class="dot"></span>No cluster</span>');
+  if (s.poller_running) {
+    const scan = s.last_scan_at ? `scanned ${ago(s.last_scan_at)}` : 'starting';
+    const cls = s.last_scan_ok === false ? 'warn' : 'ok live';
+    pills.push(`<span class="pill ${cls}" title="${esc(s.last_scan_error || scan)}"><span class="dot"></span>Watching ${esc(s.watch_namespace || 'all namespaces')} · ${scan}</span>`);
+  } else {
+    pills.push(`<span class="pill warn" title="${esc(s.poller_note)}"><span class="dot"></span>Poller off: ${esc(s.poller_note)}</span>`);
+  }
+  pills.push(s.auto_remediate
+    ? `<span class="pill warn" title="Restarts run automatically, max ${s.max_restarts_per_window} per ${s.restart_window_minutes}m per workload"><span class="dot"></span>Auto-remediate on</span>`
+    : '<span class="pill" title="Every restart needs a human click"><span class="dot"></span>Human approval</span>');
+  $('pills').innerHTML = pills.join('');
+  $('token-btn').classList.toggle('active', !!state.token);
+  $('token-btn').style.display = s.api_token_required || state.token ? '' : 'none';
 }
 
-function toggleIncident(id) {
-  const card = document.getElementById(`incident-${id}`);
-  if (expandedIncidents.has(id)) { expandedIncidents.delete(id); card.classList.remove('expanded'); }
-  else { expandedIncidents.add(id); card.classList.add('expanded'); }
+/* ---------- stats ---------- */
+function renderStats() {
+  const st = state.stats || {by_status: {}};
+  const by = st.by_status || {};
+  const blocked = (by.skipped_by_safety || 0) + (by.failed || 0);
+  const tiles = [
+    ['Incidents', st.total_incidents ?? 0, 'var(--text-3)',
+      st.avg_triage_ms ? `avg ${fmtMs(st.avg_triage_ms)} · ${fmtNum(st.avg_tokens)} tokens` : 'all time'],
+    ['Awaiting approval', by.pending_approval || 0, 'var(--warn)', 'restart proposed'],
+    ['Restarted', by.executed || 0, 'var(--ok)', 'passed every safety rail'],
+    ['Needs a human', by.manual_intervention || 0, 'var(--info)', 'config, image or resource fix'],
+    ['Blocked', blocked, 'var(--bad)', 'stopped by safety rails'],
+  ];
+  $('stats').innerHTML = tiles.map(([label, value, color, sub]) =>
+    `<div class="stat"><div class="label"><i style="background:${color}"></i>${label}</div>
+     <div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`).join('');
 }
 
-function formatRelativeTime(isoString) {
-  const diff = Date.now() - new Date(isoString).getTime();
-  const s = Math.floor(Math.abs(diff) / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
-  if (s < 10) return 'now';
-  const v = s < 60 ? `${s}s` : m < 60 ? `${m}m` : h < 24 ? `${h}h` : `${d}d`;
-  return diff < 0 ? `in ${v}` : `${v} ago`;
+/* ---------- tabs + filtering ---------- */
+function matchesTab(inc, tab) {
+  const s = statusOf(inc);
+  if (tab === 'all') return true;
+  if (tab === 'blocked') return s === 'skipped_by_safety' || s === 'failed' || s === 'parse_error';
+  return s === tab;
 }
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
-
-function formatPreview(diagnosis) {
-  const text = String(diagnosis || 'Agent triage in progress...').replace(/\s+/g, ' ').trim();
-  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-}
-
-function formatTrace(trace) {
-  if (!Array.isArray(trace) || trace.length === 0) return '<div class="trace-item">No tools called.</div>';
-  return trace.map(t => {
-    const args = t.input && Object.keys(t.input).length ? JSON.stringify(t.input) : '';
-    const timing = t.duration_ms != null ? ` <span class="tool-args">${t.duration_ms}ms</span>` : '';
-    const err = t.ok === false ? `<div class="tool-err">${escapeHtml(t.error)}</div>` : '';
-    return `<div class="trace-item"><span class="tool-name">› ${escapeHtml(t.tool)}</span>
-      <span class="tool-args">${escapeHtml(args)}</span>${timing}${err}</div>`;
+function renderTabs() {
+  $('tabs').innerHTML = TABS.map(([key, label]) => {
+    const n = state.incidents.filter(i => matchesTab(i, key)).length;
+    return `<button class="tab" role="tab" aria-selected="${state.tab === key}" data-tab="${key}">${label}<span class="n">${n}</span></button>`;
   }).join('');
 }
-
-const BADGES = {
-  executed: ['badge-executed', inc => `Restarted ${inc.executed_at ? formatRelativeTime(inc.executed_at) : ''}`],
-  pending_approval: ['badge-pending', () => 'Restart pending approval'],
-  skipped_by_safety: ['badge-skipped', () => 'Blocked by safety rail'],
-  manual_intervention: ['badge-manual', () => 'Needs a human'],
-  failed: ['badge-skipped', () => 'Remediation failed'],
-  parse_error: ['badge-error', () => 'Parse error'],
-};
-
-function badge(inc) {
-  if (!inc.action_status) return '';
-  const [cls, label] = BADGES[inc.action_status] || ['badge-error', () => inc.action_status];
-  return `<span class="remediation-badge ${cls}">${escapeHtml(label(inc))}</span>`;
+function visible() {
+  const q = state.q.trim().toLowerCase();
+  return state.incidents.filter(i => matchesTab(i, state.tab) && (!q ||
+    [i.pod_name, i.namespace, i.workload, ...(i.issues || [])].join(' ').toLowerCase().includes(q)));
 }
 
-function authHeaders() {
-  return apiToken ? { Authorization: `Bearer ${apiToken}` } : {};
+/* ---------- incidents ---------- */
+function timeline(trace) {
+  if (!trace || !trace.length) return '<div class="hint">The agent answered without calling tools.</div>';
+  return `<ol class="timeline">${trace.map((t, i) => {
+    const err = t.ok === false;
+    const args = t.input && Object.keys(t.input).length ? Object.entries(t.input).map(([k, v]) => `${k}=${v}`).join(' ') : '';
+    const meta = [args, t.duration_ms != null ? `${t.duration_ms} ms` : ''].filter(Boolean).join(' · ');
+    return `<li><span class="step${err ? ' err' : ''}">${i + 1}</span>
+      <span class="tool${err ? ' err' : ''}">${esc(t.tool)}</span><span class="tool-meta">${esc(meta)}</span>
+      ${err ? `<div class="tool-err">${esc(t.error)}</div>` : ''}</li>`;
+  }).join('')}</ol>`;
 }
 
-async function approve(diagnosisId, button) {
-  button.disabled = true;
-  try {
-    const r = await fetch(`/remediate/${diagnosisId}`, { method: 'POST', headers: authHeaders() });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) showBanner(`Remediation ${r.status}: ${body.detail || r.statusText}`);
-    else showBanner(body.status === 'executed' ? '' : `Not executed: ${body.detail}`);
-  } catch (e) {
-    showBanner(`Request failed: ${e}`);
-  }
-  await fetchIncidents();
-}
+function card(inc) {
+  const s = statusOf(inc);
+  const open = state.open.has(inc.id);
+  const diagnosis = inc.diagnosis || 'Agent is investigating…';
+  const canApprove = s === 'pending_approval' && inc.proposed_action_type === 'restart_pod';
 
-function renderIncident(inc) {
-  const hasDiagnosis = !!inc.diagnosis;
-  const meta = `<div class="meta-row">
-    <span>namespace <b>${escapeHtml(inc.namespace)}</b></span>
-    <span>workload <b>${escapeHtml(inc.workload)}</b></span>
-    <span>issues <b>${escapeHtml((inc.issues || []).join(', '))}</b></span>
-    ${inc.agent_iterations ? `<span>agent turns <b>${inc.agent_iterations}</b></span>` : ''}
-  </div>`;
-  const outcome = inc.status_detail ? '\n\nOutcome: ' + escapeHtml(inc.status_detail) : '';
-  const reason = inc.proposal_reason ? '\n' + escapeHtml(inc.proposal_reason) : '';
-  const proposal = inc.proposed_action_type
-    ? `<h3>Proposed action</h3><pre>${escapeHtml(inc.proposed_action_type)} → ${escapeHtml(inc.proposed_target)}${reason}${outcome}</pre>`
-    : '';
-  const canApprove = inc.action_status === 'pending_approval' && inc.proposed_action_type === 'restart_pod';
-  const actions = canApprove ? `<div class="actions">
-    <button class="btn" onclick="event.stopPropagation(); approve(${inc.diagnosis_id}, this)">Approve restart</button>
-    <span class="tool-args">Runs every safety rail before deleting the pod.</span></div>` : '';
-  const body = hasDiagnosis
-    ? `${meta}<h3>Diagnosis</h3><pre>${escapeHtml(inc.diagnosis)}</pre>${proposal}
-       <h3>Tool execution trace</h3><div class="trace-box">${formatTrace(inc.tool_trace)}</div>${actions}`
-    : `${meta}<div class="empty-state" style="padding:1.25rem;">Agent is triaging this pod...</div>`;
-  const cardState = hasDiagnosis ? 'status-resolved' : 'status-pending';
-  const expanded = expandedIncidents.has(inc.id) ? 'expanded' : '';
+  const proposal = inc.proposed_action_type ? `
+    <div class="section"><h3>Proposed action</h3><div class="panel">
+      <div class="action">${esc(inc.proposed_action_type)}<span class="arrow">→</span>${esc(inc.proposed_target)}</div>
+      ${inc.proposal_reason ? `<div class="reason">${esc(inc.proposal_reason)}</div>` : ''}
+      ${inc.status_detail ? `<div class="outcome ${esc(s)}">${esc(inc.status_detail)}</div>` : ''}
+      ${canApprove ? `<div class="btn-row">
+        <button class="btn" data-approve="${inc.diagnosis_id}" data-pod="${esc(inc.pod_name)}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg>Approve restart</button>
+        <span class="hint">Every safety rail runs before the pod is deleted.</span></div>` : ''}
+    </div></div>` : '';
 
-  return `<div class="incident-card ${cardState} ${expanded}" id="incident-${inc.id}">
-    <div class="incident-header" onclick="toggleIncident(${inc.id})">
-      <div class="incident-title">
-        <span class="pod-name">${escapeHtml(inc.pod_name)} <span class="ns">${escapeHtml(inc.namespace)}</span></span>
-        <div class="incident-meta">
-          <span class="detected-time">${formatRelativeTime(inc.detected_at)}</span>
-          ${badge(inc)}
-        </div>
-        <span class="diagnosis-preview">${escapeHtml(formatPreview(inc.diagnosis))}</span>
-      </div>
-      <div class="expand-icon" aria-hidden="true">&#9662;</div>
+  const body = `
+    <div>
+      <div class="section"><h3>Diagnosis</h3><div class="panel diag">${esc(diagnosis)}</div></div>
+      ${proposal}
     </div>
-    <div class="incident-body">${body}</div>
-  </div>`;
+    <div>
+      <div class="section"><h3>Investigation · ${(inc.tool_trace || []).length} tool calls</h3><div class="panel">${timeline(inc.tool_trace)}</div></div>
+      <div class="section"><h3>Details</h3><div class="panel"><dl class="kv">
+        <dt>Workload</dt><dd>${esc(inc.workload)}</dd>
+        <dt>Detected</dt><dd>${esc(new Date(inc.detected_at).toLocaleString())}</dd>
+        ${inc.executed_at ? `<dt>Restarted</dt><dd>${esc(new Date(inc.executed_at).toLocaleString())}</dd>` : ''}
+        <dt>Triage</dt><dd>${fmtMs(inc.triage_duration_ms)} · ${inc.agent_iterations ?? '–'} turns</dd>
+        <dt>Tokens</dt><dd>${fmtNum(inc.tokens)}${inc.model ? ` · ${esc(inc.model)}` : ''}</dd>
+      </dl></div></div>
+    </div>`;
+
+  return `<article class="card s-${esc(s)}${open ? ' open' : ''}">
+    <button class="card-head" aria-expanded="${open}" data-toggle="${inc.id}">
+      <div style="min-width:0">
+        <div class="title-row"><span class="pod">${esc(inc.pod_name)}</span><span class="ns">${esc(inc.namespace)}</span></div>
+        <div class="chips">${(inc.issues || []).map(x => `<span class="chip">${esc(x)}</span>`).join('')}</div>
+        <div class="preview">${esc(diagnosis.replace(/\s+/g, ' '))}</div>
+      </div>
+      <div class="right">
+        <span class="badge b-${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>
+        <span class="time">${ago(inc.detected_at)}</span>
+      </div>
+    </button>
+    <div class="body">${body}</div>
+  </article>`;
 }
 
-async function fetchIncidents() {
-  const container = document.getElementById('incidents-container');
-  try {
-    const r = await fetch('/incidents');
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const incidents = await r.json();
-    container.innerHTML = incidents.length
-      ? incidents.map(renderIncident).join('')
-      : '<div class="empty-state">No incidents yet. Cluster looks healthy.</div>';
-  } catch (e) {
-    showBanner(`Could not load incidents: ${e.message}`);
+function renderList() {
+  const list = $('list');
+  if (!state.loaded) return;
+  if (!state.incidents.length) {
+    list.innerHTML = `<div class="empty">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2" stroke-linecap="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+      <h2>No incidents yet</h2><div>Unhealthy pods show up here as soon as Triton finds them. Want to see it work?</div>
+      <code>python -m app.chaos.break_stuff all</code></div>`;
+    return;
   }
+  const rows = visible();
+  list.innerHTML = rows.length ? rows.map(card).join('')
+    : '<div class="empty"><h2>Nothing matches</h2><div>Try another tab or clear the filter.</div></div>';
 }
 
-fetchIncidents();
-setInterval(fetchIncidents, 10000);
+function render() { renderPills(); renderStats(); renderTabs(); renderList(); }
+
+/* ---------- data ---------- */
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.json();
+}
+async function refresh() {
+  try {
+    const [incidents, status, stats] = await Promise.all([getJSON('/incidents'), getJSON('/status'), getJSON('/stats')]);
+    Object.assign(state, {incidents, status, stats, loaded: true});
+  } catch (e) {
+    state.status = null; state.loaded = true;
+  }
+  render();
+}
+
+async function approve(btn) {
+  if (!confirm(`Restart ${btn.dataset.pod}?\n\nThe pod is deleted and its controller recreates it. Safety rails run first.`)) return;
+  btn.disabled = true;
+  try {
+    const headers = state.token ? {Authorization: `Bearer ${state.token}`} : {};
+    const r = await fetch(`/remediate/${btn.dataset.approve}`, {method: 'POST', headers});
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 401) { toast('This server needs an API token. Add it with the key button.', true); $('token-btn').style.display = ''; $('token-pop').classList.add('show'); }
+    else if (!r.ok) toast(body.detail || `HTTP ${r.status}`, true);
+    else toast(body.status === 'executed' ? 'Pod restarted.' : `Not executed: ${body.detail}`, body.status !== 'executed');
+  } catch (e) { toast(`Request failed: ${e.message}`, true); }
+  await refresh();
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click', e => {
+  const approveBtn = e.target.closest('[data-approve]');
+  if (approveBtn) { approve(approveBtn); return; }
+  const toggle = e.target.closest('[data-toggle]');
+  if (toggle) {
+    const id = Number(toggle.dataset.toggle);
+    if (state.open.has(id)) state.open.delete(id); else state.open.add(id);
+    renderList(); return;
+  }
+  const tab = e.target.closest('[data-tab]');
+  if (tab) { state.tab = tab.dataset.tab; renderTabs(); renderList(); return; }
+  if (!e.target.closest('#token-pop') && !e.target.closest('#token-btn')) $('token-pop').classList.remove('show');
+});
+$('search').addEventListener('input', e => { state.q = e.target.value; renderList(); });
+$('token-btn').addEventListener('click', () => $('token-pop').classList.toggle('show'));
+$('token-save').addEventListener('click', () => {
+  state.token = $('token-input').value.trim(); $('token-input').value = '';
+  $('token-pop').classList.remove('show'); toast(state.token ? 'Token saved for this tab.' : 'Token cleared.'); renderPills();
+});
+$('theme-btn').addEventListener('click', () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  root.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('triton-theme', root.dataset.theme); } catch (err) { /* storage unavailable */ }
+});
+try { const t = localStorage.getItem('triton-theme'); if (t) document.documentElement.dataset.theme = t; } catch (err) { /* storage unavailable */ }
+// Deep link: /dashboard#incident-12 opens that incident.
+const deepLink = location.hash.match(/^#incident-(\d+)$/);
+if (deepLink) state.open.add(Number(deepLink[1]));
+
+refresh();
+setInterval(refresh, 5000);
 </script>
 </body>
 </html>
