@@ -70,7 +70,7 @@ SCENARIOS = {
 
 def _kubectl(*args: str, stdin: str | None = None) -> None:
     if shutil.which("kubectl") is None:
-        sys.exit("kubectl not found on PATH - install it and point it at your cluster (e.g. `minikube start`).")
+        sys.exit("kubectl not found on PATH - install it and point it at your cluster (e.g. `kind create cluster`).")
     subprocess.run(["kubectl", *args], input=stdin, text=True, check=True)
 
 

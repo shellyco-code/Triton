@@ -28,6 +28,7 @@ evals:     ## Score the agent on recorded scenarios (needs GROQ_API_KEY)
 docker:    ## Build the container image
 	docker build -t triton:latest .
 
-deploy:    ## Build into minikube and deploy
-	minikube image build -t triton:latest .
+deploy:    ## Build, load into the kind cluster "triton", and deploy
+	docker build -t triton:latest .
+	kind load docker-image triton:latest --name triton
 	kubectl apply -k deploy/k8s

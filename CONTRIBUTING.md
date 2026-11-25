@@ -25,7 +25,7 @@ pre-commit install                                  # optional: lint on commit
 | Run the API | `uvicorn app.main:app --reload` |
 | UI work without a cluster | `DATABASE_URL=sqlite:///./demo.db python -m scripts.seed_demo_data` then run the API with the same `DATABASE_URL` and `ENABLE_POLLER=false` |
 | Agent evals (needs `GROQ_API_KEY`) | `python -m evals.run --trials 3` |
-| Real failures on minikube | `python -m app.chaos.break_stuff all` |
+| Real failures on a local cluster (kind or minikube) | `python -m app.chaos.break_stuff all` |
 
 ## Good first contributions
 

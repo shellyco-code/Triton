@@ -63,10 +63,10 @@ The model never acts on the cluster directly. Before a pod is deleted, the execu
 
 Agent tools take **no pod or namespace arguments**. They're closures over the incident pod, so the model can't read other workloads' logs either.
 
-## Quickstart (local, minikube)
+## Quickstart (local cluster)
 
 ```bash
-minikube start
+kind create cluster --name triton      # or: minikube start
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements-dev.txt
 cp .env.example .env                               # add GROQ_API_KEY
@@ -88,7 +88,7 @@ proposal with an **Approve restart** button. The OOM and bad-image incidents are
 
 ```bash
 docker build -t triton:latest .
-minikube image load triton:latest
+kind load docker-image triton:latest --name triton   # minikube: minikube image load triton:latest
 kubectl apply -k deploy/k8s
 kubectl -n triton create secret generic triton-secrets \
   --from-literal=GROQ_API_KEY=... --from-literal=TRITON_API_TOKEN=...
