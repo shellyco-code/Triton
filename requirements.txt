@@ -1,9 +1,9 @@
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-kubernetes==31.0.0
+fastapi==0.162.5
+uvicorn[standard]==0.54.0
+kubernetes==37.0.3
 groq==1.7.0
-sqlalchemy==2.0.36
-pydantic==2.9.2
-python-dotenv==1.0.1
-prometheus-client==0.21.1
+sqlalchemy==2.0.58
+pydantic==2.14.4
+python-dotenv==1.2.4
+prometheus-client==0.26.0
 httpx==0.28.1
