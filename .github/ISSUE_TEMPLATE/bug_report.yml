@@ -1,0 +1,38 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the incident JSON (`GET /incidents/<id>`) if the agent misdiagnosed something.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. python -m app.chaos.break_stuff crashloop
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Triton version / commit
+  - type: input
+    id: cluster
+    attributes:
+      label: Kubernetes distribution and version
+      placeholder: minikube v1.37, k8s 1.34
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell
