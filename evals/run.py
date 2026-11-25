@@ -108,8 +108,8 @@ def summarize(scores: list[Score]) -> dict:
 
 
 def print_report(scores: list[Score], summary: dict, model: str) -> None:
-    mark = {True: "✅", False: "❌"}
-    print(f"\n## Triton agent eval — {model}\n")
+    mark = {True: "pass", False: "FAIL"}
+    print(f"\n## Triton agent eval: {model}\n")
     print("| Scenario | Trial | Proposed | Action | Root cause | Safe | Tools | Latency | Tokens |")
     print("|---|---|---|---|---|---|---|---|---|")
     for s in scores:

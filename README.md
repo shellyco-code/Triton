@@ -12,12 +12,17 @@ root-cause diagnosis, and proposes a fix. Restarts run only after they pass a se
 ![Triton dashboard](docs/dashboard.png)
 <sub>Dashboard with sample data (`make demo`). Each incident shows the diagnosis, the proposed action and its safety outcome, and the agent's investigation step by step.</sub>
 
-## Why it's interesting
+## Design notes
 
-- **Agent loop built from scratch.** It uses the Groq SDK directly, with no LangChain. The loop has an iteration budget, parallel tool calls, tool errors fed back to the model, and output validated with Pydantic.
-- **The LLM is treated as untrusted.** Pod logs are attacker-controllable input, so the agent's tools are bound to the pod under investigation and every proposal is re-checked by plain code before anything touches the cluster.
-- **Measured, not vibes.** An eval harness replays recorded failures, including a prompt-injection attack, through the real model and scores action choice, root-cause accuracy and safety.
-- **Production-minded.** Least-privilege RBAC, a non-root read-only container, Prometheus metrics, CI, and 42 tests that run without a cluster or an API key.
+- The agent loop is written directly against the Groq SDK (no LangChain). It has a turn budget,
+  handles several tool calls per turn, feeds tool errors back to the model instead of crashing, and
+  validates the final answer with Pydantic.
+- I treat the model as untrusted. Pod logs can contain anything, so the tools are bound to the pod
+  being investigated and every proposal is re-checked by ordinary code before it touches the cluster.
+- Agent quality is measured with an eval harness that replays recorded failures (one of them a
+  prompt-injection attempt) through the real model.
+- Deployment uses least-privilege RBAC and a non-root, read-only container. There are Prometheus
+  metrics, CI, and a test suite that runs without a cluster or an API key.
 
 ## Architecture
 
@@ -107,7 +112,7 @@ All settings are environment variables. See [`app/config.py`](app/config.py) and
 | `POLL_INTERVAL_SECONDS` | `30` | Scan frequency |
 | `TRIAGE_COOLDOWN_MINUTES` | `10` | Don't re-triage the same workload within this window |
 | `MAX_RESTARTS_PER_WINDOW` / `RESTART_WINDOW_MINUTES` | `2` / `30` | Restart rate limit per workload |
-| `PROTECTED_NAMESPACES` | `kube-system,…` | Never remediate here |
+| `PROTECTED_NAMESPACES` | `kube-system,...` | Never remediate here |
 | `MAX_AGENT_ITERATIONS` | `6` | Tool-calling budget per incident |
 | `NOTIFY_WEBHOOK_URL` | – | Slack-compatible webhook for new incidents and remediation outcomes |
 
@@ -179,7 +184,7 @@ and `kubeconform` validation of the manifests.
 app/
   agent/triage_agent.py         LLM tool-calling loop, output validation
   agent/remediation_executor.py safety rails + pod restart
-  agent/poller.py               background scan → triage → remediate
+  agent/poller.py               background loop: scan, triage, remediate
   k8s/client.py                 detection (pure function) + read-only tools
   services.py                   persistence shared by API and poller
   main.py                       FastAPI app
